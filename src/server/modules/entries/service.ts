@@ -37,6 +37,7 @@ import {
   findVersion,
   insertVersionIfCurrent,
   listCurrentEntries,
+  markMatchingEntriesRead,
   listVersions,
   patchEntryState,
   prepareCreateEntry,
@@ -99,6 +100,10 @@ function normalizeEntryQuery(
   const important = raw.important ?? "all";
   const limit = raw.limit ?? LIMITS.defaultPageSize;
   const search = raw.query?.trim() || undefined;
+  const read = raw.read ?? "all";
+  const time_field = raw.time_field ?? "updated";
+  const start = raw.start ? new Date(raw.start).toISOString() : undefined;
+  const end = raw.end ? new Date(raw.end).toISOString() : undefined;
   const requestedAgentId = raw.agent_id;
 
   if (raw.cursor && raw.cursor.length > 2_048) throw badRequest("分页游标过长");
@@ -118,6 +123,7 @@ function normalizeEntryQuery(
     archived,
     important,
     query: search ?? null,
+    read, time_field, start: start ?? null, end: end ?? null,
   });
   const cursor = decodeCursor(raw.cursor, fingerprint);
   const expectedCursorLength = order === "id_asc" ? 1 : 2;
@@ -131,6 +137,7 @@ function normalizeEntryQuery(
       completion,
       archived,
       important,
+      read, time_field, start, end,
       // Full rows can each contain 256 KiB of Markdown. Keep the D1 result
       // bounded before applying the exact serialized-response budget below.
       limit: view === "full" ? Math.min(limit, 7) : limit,
@@ -188,6 +195,12 @@ export async function getEntry(ctx: ServiceContext, entryId: string): Promise<En
   const entry = await findCurrentEntry(ctx.env.DB, readScopeFor(ctx), entryId);
   if (!entry) throw notFound("条目不存在");
   return entry;
+}
+
+export async function markEntriesRead(ctx: ServiceContext, filters: EntryQuery): Promise<{ updated: number }> {
+  requireAdminActor(ctx.actor);
+  const { query } = normalizeEntryQuery(ctx.actor, filters, "admin");
+  return { updated: await markMatchingEntriesRead(ctx.env.DB, resolveReadScope(ctx.actor, filters.agent_id), query) };
 }
 
 export async function createEntry(

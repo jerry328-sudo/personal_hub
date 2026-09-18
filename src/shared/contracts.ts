@@ -21,6 +21,7 @@ export interface AgentDto {
 
 export interface EntryStateDto {
   archived: boolean;
+  archived_at?: string | null;
   read_version: number;
   completed: boolean;
   completed_at: string | null;
@@ -167,6 +168,11 @@ export interface AgentKeyMetadataDto {
 export interface SessionDto {
   authenticated: true;
   expires_at: string;
+}
+
+export interface ChangeAdminSecretInput {
+  current_secret: string;
+  new_secret: string;
 }
 
 export interface PurgeProgressDto {

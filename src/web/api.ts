@@ -107,6 +107,9 @@ export const sessionApi = {
     body: jsonBody({ secret }),
   }),
   logout: () => requestJson<void>("/api/v1/auth/logout", { method: "POST" }),
+  changeSecret: (currentSecret: string, newSecret: string) => requestJson<void>("/api/v1/auth/change-secret", {
+    method: "POST", body: jsonBody({ current_secret: currentSecret, new_secret: newSecret }),
+  }),
 };
 
 export interface AgentListQuery {
@@ -178,9 +181,20 @@ export interface EntryListQuery {
   cursor?: string;
   limit?: number;
   query?: string;
+  read?: "all" | "unread" | "updated" | "read";
+  start?: string;
+  end?: string;
+  time_field?: "updated" | "created" | "archived" | "completed";
 }
 
 export const entriesApi = {
+  counts: (signal?: AbortSignal) => requestJson<{ unread: number; important_unread: number; archived: number; open_tasks: number }>("/api/v1/admin/entries/counts", { signal }),
+  markRead: (query: EntryListQuery) => {
+    const { agent_id, completion, archived, important, query: search, read, start, end, time_field } = query;
+    return requestJson<{ updated: number }>("/api/v1/admin/entries/read", {
+      method: "POST", body: jsonBody({ agent_id, completion, archived, important, query: search, read, start, end, time_field }),
+    });
+  },
   list: <T extends EntryBriefDto | EntryFullDto = EntryBriefDto>(query: EntryListQuery, signal?: AbortSignal) =>
     requestJson<Page<T>>(withQuery("/api/v1/admin/entries", query), { signal }),
   get: (id: string, signal?: AbortSignal) =>
@@ -242,4 +256,17 @@ export const attachmentsApi = {
 
 export function notifyDataChanged(): void {
   window.dispatchEvent(new CustomEvent("personal-hub:data-changed"));
+  try { localStorage.setItem("personal-hub:revision", crypto.randomUUID()); } catch { /* Local notifications still work. */ }
+}
+
+export function subscribeDataChanged(callback: () => void): () => void {
+  const onStorage = (event: StorageEvent) => { if (event.key === "personal-hub:revision") callback(); };
+  window.addEventListener("personal-hub:data-changed", callback);
+  window.addEventListener("storage", onStorage);
+  window.addEventListener("focus", callback);
+  return () => {
+    window.removeEventListener("personal-hub:data-changed", callback);
+    window.removeEventListener("storage", onStorage);
+    window.removeEventListener("focus", callback);
+  };
 }

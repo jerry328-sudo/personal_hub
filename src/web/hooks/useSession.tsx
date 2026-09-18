@@ -8,6 +8,7 @@ interface SessionContextValue {
   error: string | null;
   login: (secret: string) => Promise<void>;
   logout: () => Promise<void>;
+  changeSecret: (currentSecret: string, newSecret: string) => Promise<void>;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -53,7 +54,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const value = useMemo(() => ({ session, loading, error, login, logout }), [session, loading, error, login, logout]);
+  const changeSecret = useCallback(async (currentSecret: string, newSecret: string) => {
+    await sessionApi.changeSecret(currentSecret, newSecret);
+    setSession(null);
+  }, []);
+
+  const value = useMemo(() => ({ session, loading, error, login, logout, changeSecret }), [session, loading, error, login, logout, changeSecret]);
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
 

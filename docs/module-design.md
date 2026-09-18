@@ -1,6 +1,6 @@
 # Personal Hub 项目模块与函数设计
 
-状态：首版代码已经落地。已确认的单文件交互模板保存在 `design/prototype.html`；仓库根目录 `index.html` 是 Vite/React 应用入口，`src/server/index.ts` 是 Worker 导出入口。Worker 后端、React 页面、D1 迁移、本地 D1/R2 测试和部署脚本均已加入仓库；远程 Cloudflare 资源和生产部署尚未创建或执行。本文同时记录当前实现和仍需远程验收的边界。
+状态：首版代码已经落地。已确认的单文件交互模板保存在 `design/prototype.html`；仓库根目录 `index.html` 是 Vite/React 应用入口，`src/server/index.ts` 是 Worker 导出入口。Worker 后端、React 页面、D1 迁移、本地 D1/R2 测试和部署脚本均已加入仓库；production 已于 2026-09-18 部署并完成线上 API 检查，详见 [部署记录](releases/2026-09-18-production.md)。本文同时记录当前实现和仍需验收的边界。
 
 需求依据：[产品与架构设计](./design.md)。本文件说明“代码放哪里、函数做什么、调用关系是什么”。接口字段使用 snake_case，TypeScript 内部变量与函数使用 camelCase。
 
@@ -192,6 +192,7 @@ routes.ts 注册下表入口；service 负责会话和密钥策略，crypto 不�
 | POST /api/v1/auth/login | loginAdmin(env, request, input) | 路由验证 Origin；service 对每次登录请求限流并验证管理员密钥，插入 Session，返回 Session 与 HttpOnly Cookie |
 | GET /api/v1/auth/session | getAdminSession(ctx) | 当前会话信息；无会话 401 |
 | POST /api/v1/auth/logout | logoutAdmin(ctx) | 撤销当前 Session 并清 Cookie |
+| POST /api/v1/auth/change-secret | changeAdminSecret(ctx, request, input) | 校验当前密钥、同源和限流；原子更新摘要与版本，撤销全部旧 Session |
 | POST /api/v1/admin/agents/:id/keys | issueAgentKey(ctx, agentId, input) | 仅管理员；返回一次明文，禁止超出有效密钥数量 |
 | GET /api/v1/admin/agents/:id/keys | listAgentKeys(ctx, agentId) | 仅元数据，无摘要/明文 |
 | DELETE /api/v1/admin/agents/:id/keys/:keyId | revokeAgentKey(ctx, agentId, keyId) | 目标归属匹配，幂等撤销 |
@@ -215,7 +216,9 @@ crypto.ts：
 repository.ts：
 findKeyWithAgent、insertKey、listKeyMetadata、revokeKey、revokeAgentKeys、touchKeyUsage、insertSession、findSession、revokeSession、deleteExpiredSessions。新建 Agent 的 key 写入提供 prepareInsertKey() 语句供外层 batch，不嵌套提交。
 
-密钥最多两把未撤销且未过期的记录以便轮换；限额在数据库写入条件内执行，不能只做事前计数。总管密钥要求 expires_at；普通密钥允许明确的空有效期。Session 默认按 `SESSION_TTL_SECONDS=604800` 设置为 7 天绝对有效期，不做滑动续期。凭据每次从 D1 核验，不加会导致撤销延迟的缓存。
+密钥最多两把未撤销且未过期的记录以便轮换；限额在数据库写入条件内执行，不能只做事前计数。普通和总管密钥的 expires_at 省略或为 null 均表示无限期。Session 默认按 `SESSION_TTL_SECONDS=604800` 设置为 7 天绝对有效期，不做滑动续期。凭据每次从 D1 核验，不加会导致撤销延迟的缓存。
+
+`0003_admin_credentials.sql` 增加单行 admin_credentials 表（secret_hash、revision、updated_at），以及 admin_sessions.credential_revision。findAdminCredential 读取当前版本；hashAdminLoginSecret / verifyAdminLoginHash 使用 AUTH_PEPPER 和独立域的 HMAC。初始摘要为空时用 ADMIN_LOGIN_SECRET 引导登录；在线修改后仅验证数据库摘要。rotateAdminCredential 使用版本条件更新和有效 Session 校验，在同一个 D1 batch 中撤销旧版本会话。insertSession 按当前版本条件插入，findSession 校验版本，阻止修改前开始的并发登录恢复旧访问权。SecurityPage 提供旧密钥、新密钥与确认输入、随机生成和保存确认；成功后返回登录页。
 
 登录限流使用 Workers 的 Rate Limiting binding，不新增 KV 或业务表。Binding 的 `limit()` 调用会消费额度，因此当前实现限制同一来源的全部登录请求（成功和失败都会计数）。它是按位置的近似限流，不能声称是全球精确计数。[官方限制与行为](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)
 
@@ -446,7 +449,7 @@ components/MarkdownContent.tsx：MarkdownContent、isAllowedLink(url)、resolveM
 | 5 真实网页 | 将模板迁移 React，接 API、三布局、主题 | 桌面/手机主要流程、历史版已读、主题持久化正确 |
 | 6 发布说明 | 分角色 API 文档、测试/生产绑定、备份恢复 | 隔离环境验收、数据库和图片共同恢复演练完成 |
 
-阶段 1–5 的本地实现和阶段 6 的部署文档已经落地；本地迁移、API、React 页面与自动化测试可运行。真实 Cloudflare staging/production 资源、远程迁移、浏览器验收和生产发布尚未执行。
+阶段 1–5 的本地实现和阶段 6 的部署文档已经落地；本地迁移、API、React 页面与自动化测试可运行。production 资源、远程迁移和首次发布已完成，线上登录、权限、完成状态及图片读写已验证；staging、浏览器交互验收和备份恢复演练尚未执行。
 
 ## 15. 测试按风险组织
 

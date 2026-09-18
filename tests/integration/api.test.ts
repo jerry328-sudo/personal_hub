@@ -127,6 +127,83 @@ async function uploadAttachment(token: string, filename: string): Promise<Attach
 }
 
 describe("Personal Hub Worker API", () => {
+  it("filters archive time server-side with exclusive end, owner scope and bound cursors", async () => {
+    const cookie = await loginAdmin("archive-window");
+    const own = await createAgent(cookie, "archive-window-owner");
+    const other = await createAgent(cookie, "archive-window-other");
+    const items = await Promise.all([createEntry(own.key.secret, "old"), createEntry(own.key.secret, "inside-a"), createEntry(own.key.secret, "inside-b"), createEntry(own.key.secret, "end"), createEntry(other.key.secret, "outside-owner")]);
+    const timestamps = ["2026-09-08T23:59:59.000Z", "2026-09-09T00:00:00.000Z", "2026-09-10T00:00:00.000Z", "2026-09-19T00:00:00.000Z", "2026-09-10T00:00:00.000Z"];
+    await env.DB.batch(items.map((item, i) => env.DB.prepare("UPDATE entries SET archived = 1, archived_at = ? WHERE id = ?").bind(timestamps[i], item.id)));
+    const headers = { Authorization: `Bearer ${own.key.secret}` };
+    const range = "archived=yes&view=brief&time_field=archived&start=2026-09-09T08%3A00%3A00%2B08%3A00&end=2026-09-19T00%3A00%3A00Z&limit=1";
+    const first = await readJson<Page<EntryFullDto>>(await api(`/api/v1/agent/entries?${range}`, { headers }));
+    expect(first.items).toHaveLength(1);
+    expect(first.next_cursor).toBeTruthy();
+    const next = await readJson<Page<EntryFullDto>>(await api(`/api/v1/agent/entries?${range}&cursor=${encodeURIComponent(first.next_cursor!)}`, { headers }));
+    expect(new Set([...first.items, ...next.items].map((item) => item.id))).toEqual(new Set([items[1]!.id, items[2]!.id]));
+    expect(next.next_cursor).toBeNull();
+    expect((await api(`/api/v1/agent/entries?${range.replace("time_field=archived", "time_field=created")}&cursor=${encodeURIComponent(first.next_cursor!)}`, { headers })).status).toBe(400);
+    expect((await api("/api/v1/agent/entries?start=2026-10-01T00:00:00Z&end=2026-09-01T00:00:00Z", { headers })).status).toBe(400);
+    expect((await api(`/api/v1/agent/entries?agent_id=${other.agent.id}&${range}`, { headers })).status).toBe(403);
+    const active = await readJson<Page<EntryFullDto>>(await api(`/api/v1/agent/entries?archived=no`, { headers }));
+    expect(active.items).toHaveLength(0);
+  });
+
+  it("marks every matching page read atomically and preserves other scopes and newer versions", async () => {
+    const cookie = await loginAdmin("bulk-read");
+    const own = await createAgent(cookie, "bulk-read-owner");
+    const other = await createAgent(cookie, "bulk-read-other");
+    const seed = await createEntry(own.key.secret, "bulk-needle");
+    const unrelated = await createEntry(other.key.secret, "bulk-needle");
+    const archive = await createEntry(own.key.secret, "bulk-needle-archive");
+    await env.DB.prepare("UPDATE entries SET archived = 1 WHERE id = ?").bind(archive.id).run();
+    for (let offset = 0; offset < 135; offset += 45) {
+      const statements = [];
+      for (let i = offset; i < offset + 45; i++) {
+        const id = `${seed.id}-extra-${i}`;
+        statements.push(env.DB.prepare("INSERT INTO entries (id, agent_id, created_at) VALUES (?, ?, ?)").bind(id, own.agent.id, "2026-09-10T00:00:00.000Z"));
+        statements.push(env.DB.prepare("INSERT INTO entry_versions (entry_id, version, created_by_agent_id, title, content, created_at) VALUES (?, 1, ?, 'bulk-needle', 'body', ?)").bind(id, own.agent.id, "2026-09-10T00:00:00.000Z"));
+      }
+      await env.DB.batch(statements);
+    }
+    const headers = { Cookie: cookie, Origin: APP_ORIGIN };
+    const body = { agent_id: own.agent.id, archived: "no", query: "bulk-needle" };
+    expect((await api("/api/v1/admin/entries/read", jsonBody("POST", body, { Cookie: cookie }))).status).toBe(403);
+    expect((await api("/api/v1/admin/entries/read", jsonBody("POST", body, { Authorization: `Bearer ${own.key.secret}` }))).status).toBe(403);
+    expect((await api("/api/v1/admin/entries/read", jsonBody("POST", { ...body, cursor: "page" }, headers))).status).toBe(400);
+    expect(await readJson(await api("/api/v1/admin/entries/read", jsonBody("POST", body, headers)))).toEqual({ updated: 136 });
+    expect(await readJson(await api("/api/v1/admin/entries/read", jsonBody("POST", body, headers)))).toEqual({ updated: 0 });
+    for (const id of [archive.id, unrelated.id]) {
+      const item = await readJson<EntryFullDto>(await api(`/api/v1/admin/entries/${id}`, { headers }));
+      expect(item.read_version).toBe(0);
+    }
+    const seenByAgent = await readJson<EntryFullDto>(await api(`/api/v1/agent/entries/${seed.id}`, { headers: { Authorization: `Bearer ${own.key.secret}` } }));
+    expect(seenByAgent.read_version).toBe(1);
+    const appended = await api(`/api/v1/agent/entries/${seed.id}/versions`, jsonBody("POST", { base_version: 1, title: "bulk-needle", content: "new", important: true }, { Authorization: `Bearer ${own.key.secret}` }));
+    expect(appended.status).toBe(201);
+    const unread = await readJson<Page<EntryFullDto>>(await api(`/api/v1/admin/entries?agent_id=${own.agent.id}&archived=no&read=updated`, { headers }));
+    expect(unread.items.map((item) => item.id)).toEqual([seed.id]);
+    expect(unread.items[0]!.read_version).toBe(1);
+    const counts = await readJson<{ unread: number; important_unread: number; archived: number }>(await api("/api/v1/admin/entries/counts", { headers }));
+    const expected = await env.DB.prepare("SELECT COUNT(*) AS n FROM entries e JOIN entry_versions v ON v.entry_id = e.id AND v.version = (SELECT MAX(version) FROM entry_versions WHERE entry_id=e.id) WHERE e.archived=0 AND e.read_version<v.version").first<{ n: number }>();
+    expect(counts.unread).toBe(expected!.n);
+  });
+
+  it("records archive transitions without replacing an existing archive time", async () => {
+    const cookie = await loginAdmin("archive-state");
+    const own = await createAgent(cookie, "archive-state-owner");
+    const entry = await createEntry(own.key.secret, "archive-state");
+    const headers = { Cookie: cookie, Origin: APP_ORIGIN };
+    const route = `/api/v1/admin/entries/${entry.id}/state`;
+    const archived = await readJson<EntryStateDto>(await api(route, jsonBody("PATCH", { archived: true }, headers)));
+    expect(archived.archived_at).toBeTruthy();
+    const again = await readJson<EntryStateDto>(await api(route, jsonBody("PATCH", { archived: true, read_version: 1 }, headers)));
+    expect(again.archived_at).toBe(archived.archived_at);
+    const restored = await readJson<EntryStateDto>(await api(route, jsonBody("PATCH", { archived: false }, headers)));
+    expect(restored.archived_at).toBeNull();
+    expect(restored.read_version).toBe(1);
+  });
+
   it("keeps discovery authenticated, role-scoped, and outside SPA fallback", async () => {
     const anonymous = await api("/api");
     expect(anonymous.status).toBe(401);
@@ -330,16 +407,16 @@ describe("Personal Hub Worker API", () => {
     });
     expect(ordinaryOnManagerRoute.status).toBe(403);
 
-    const managerWithoutExpiry = await api("/api/v1/admin/agents", jsonBody("POST", {
-      name: "Invalid manager",
-      scope: "all",
-    }, { Cookie: cookie, Origin: APP_ORIGIN }));
-    expect(managerWithoutExpiry.status).toBe(409);
-
-    const manager = await createAgent(cookie, "Expiring manager", {
-      scope: "all",
-      key_expires_at: "2099-01-01T00:00:00.000Z",
-    });
+    const manager = await createAgent(cookie, "Permanent manager", { scope: "all" });
+    expect(manager.key.expires_at).toBeNull();
+    const managerSecondKey = await api(`/api/v1/admin/agents/${manager.agent.id}/keys`,
+      jsonBody("POST", { expires_at: null }, { Cookie: cookie, Origin: APP_ORIGIN }));
+    expect(managerSecondKey.status).toBe(201);
+    const issuedManagerKey = await readJson<IssuedKeyDto>(managerSecondKey);
+    expect(issuedManagerKey.expires_at).toBeNull();
+    expect((await api("/api/v1/manager/entries", {
+      headers: { Authorization: `Bearer ${issuedManagerKey.secret}` },
+    })).status).toBe(200);
     const managerOnOrdinaryRoute = await api("/api/v1/agent/entries", {
       headers: { Authorization: `Bearer ${manager.key.secret}` },
     });
@@ -728,6 +805,41 @@ describe("Personal Hub Worker API", () => {
     });
     expect(emptyList.status).toBe(200);
     expect((await readJson<Page<TaskDto>>(emptyList)).items).toEqual([]);
+  });
+
+  it("deletes an entry with multiple versions, clears its report pointer, and preserves linked tasks", async () => {
+    const cookie = await loginAdmin("entry-delete");
+    const owner = await createAgent(cookie, "Entry deletion owner");
+    const entry = await createEntry(owner.key.secret, "Entry to delete");
+    const bearer = { Authorization: `Bearer ${owner.key.secret}` };
+    const admin = { Cookie: cookie, Origin: APP_ORIGIN };
+    const append = await api(`/api/v1/agent/entries/${entry.id}/versions`, jsonBody("POST", {
+      base_version: 1, title: "Updated entry", content: "Second version",
+    }, bearer));
+    expect(append.status).toBe(201);
+    const report = await api(`/api/v1/admin/agents/${owner.agent.id}`, jsonBody("PATCH", {
+      display_mode: "report", main_entry_id: entry.id,
+    }, admin));
+    expect(report.status).toBe(200);
+    const taskResponse = await api("/api/v1/agent/tasks", jsonBody("POST", {
+      title: "Keep this task", entry_id: entry.id,
+    }, bearer));
+    expect(taskResponse.status).toBe(201);
+    const task = await readJson<TaskDto>(taskResponse);
+
+    const remove = await api(`/api/v1/admin/entries/${entry.id}`, { method: "DELETE", headers: admin });
+    expect(remove.status).toBe(204);
+    expect((await api(`/api/v1/agent/entries/${entry.id}`, { headers: bearer })).status).toBe(404);
+    const versions = await env.DB.prepare("SELECT COUNT(*) AS count FROM entry_versions WHERE entry_id = ?")
+      .bind(entry.id).first<{ count: number }>();
+    expect(versions?.count).toBe(0);
+    const agentResponse = await api("/api/v1/agent", { headers: bearer });
+    expect((await readJson<AgentDto>(agentResponse)).main_entry_id).toBeNull();
+    const tasksResponse = await api("/api/v1/agent/tasks", { headers: bearer });
+    expect((await readJson<Page<TaskDto>>(tasksResponse)).items).toContainEqual(
+      expect.objectContaining({ id: task.id, entry_id: null, title: "Keep this task" }),
+    );
+    expect((await api(`/api/v1/admin/entries/${entry.id}`, { method: "DELETE", headers: admin })).status).toBe(404);
   });
 
   it("blocks administrator task updates and deletes once the owner starts deleting", async () => {

@@ -65,6 +65,8 @@ const ADMIN_ROUTES: RouteSummary[] = [
   { method: "GET, POST", path: "/api/v1/admin/agents/{id}/keys", purpose: "列出元数据或签发新密钥" },
   { method: "DELETE", path: "/api/v1/admin/agents/{id}/keys/{key_id}", purpose: "撤销密钥" },
   { method: "GET", path: "/api/v1/admin/entries", purpose: "跨 Agent 分页读取条目" },
+  { method: "GET", path: "/api/v1/admin/entries/counts", purpose: "准确统计未读、重要未读、归档和待办数量" },
+  { method: "POST", path: "/api/v1/admin/entries/read", purpose: "将筛选范围内的全部当前版本标为已读" },
   { method: "POST", path: "/api/v1/admin/agents/{agent_id}/entries", purpose: "为目标 Agent 创建条目" },
   { method: "GET", path: "/api/v1/admin/entries/{id}", purpose: "读取单个条目" },
   { method: "GET, POST", path: "/api/v1/admin/entries/{id}/versions", purpose: "读取版本目录或追加版本" },
@@ -77,6 +79,7 @@ const ADMIN_ROUTES: RouteSummary[] = [
   { method: "GET", path: "/api/v1/media/{attachment_id}", purpose: "读取私有图片" },
   { method: "GET", path: "/api/v1/auth/session", purpose: "读取管理员会话" },
   { method: "POST", path: "/api/v1/auth/logout", purpose: "撤销当前管理员会话" },
+  { method: "POST", path: "/api/v1/auth/change-secret", purpose: "验证当前登录密钥后修改，并使全部管理员会话失效" },
 ];
 
 function discoveryRole(actor: Actor): DiscoveryRole {
@@ -105,8 +108,8 @@ export function getQuickStart(actor: Actor): QuickStartDocument {
     authentication: authenticationFor(role),
     available_routes: routesFor(role),
     workflow: [
-      "先读取当前凭据可见的全部已有条目，包括已完成和归档内容。",
-      "持续请求 next_cursor，直到它为 null，再在调用方比较和去重。",
+      "先按任务选择时间范围读取已有条目，归档和已完成内容可用 start、end、time_field 限定，避免历史数据超出上下文。",
+      "先用 view=brief 和 limit 分页筛选，按需读取正文；next_cursor 不为 null 表示该范围仍有更多结果，可保存游标分批处理。",
       "同一件事没有新事实时，不创建条目、不追加相同版本，也不重复生成待办。",
       "确有新进展时，携带刚读取的 base_version 向原条目追加完整版本；完成状态会保留。",
       "只有新的独立事项才创建新条目。写请求结果未知时先读取确认，不要盲目重试。",
@@ -126,7 +129,7 @@ const COMMON_DOCS = `# Personal Hub API v1
 
 ## 固定工作约定
 
-1. 先读取可见的全部当前条目，包括已完成与归档条目，并读完所有分页。
+1. 先按任务需要读取已有条目。归档与已完成记录可限定时间范围；先读摘要，再按需读正文。可保存游标分批处理，不必把所有历史内容同时放入上下文。
 2. 平台不做语义去重。已完成的同一件事没有新事实时，不再创建条目、追加相同内容或重复生成待办。
 3. 有新事实时向原条目追加完整版本，并提交刚读取的 \`base_version\`。追加版本不会清除完成、归档或已读状态。
 4. 新的独立事项才创建新条目。请求超时或连接中断后先读取确认结果，不盲目重试写操作。
@@ -139,6 +142,9 @@ const COMMON_DOCS = `# Personal Hub API v1
 - 错误返回 \`{ "error": { "code", "message", "request_id", "details"? } }\`。
 - 常见状态码：400 输入错误，401 凭据无效，403 权限不足，404 资源不存在或不属于当前身份，409 并发冲突，413 请求过大，415 图片类型不支持，429 登录尝试过多。
 - 条目列表支持的核心筛选：\`completion=all|open|done\`、\`archived=all|yes|no\`、\`view=brief|full\`、\`limit\`、\`cursor\`。普通 Agent 默认 full，并默认包含已完成和归档。
+- 时间筛选：\`start\`（包含）与 \`end\`（不包含）接受带时区 ISO 8601，\`time_field=updated|created|archived|completed\` 默认 updated。参数会在服务端过滤，并绑定分页游标。可只提供一端。
+- 示例：\`GET /api/v1/agent/entries?archived=yes&time_field=archived&start=2026-09-08T16:00:00Z&end=2026-09-18T16:00:00Z&view=brief&limit=30\`。表示上海时间 9 月 9 日至 18 日的归档。历史归档的 archived_at 以迁移前最新版本时间近似，新归档记录真实操作时间。
+- 支持 \`query\` 搜索当前标题或正文、\`read=all|unread|updated|read\` 阅读状态、\`important=all|yes|no\`。网页的 Agent 列表使用 archived=no；归档只在归档栏目集中显示，API 仍可按需读取。
 - 待办列表支持 \`agent_id\`（仅跨 Agent 身份）、\`done=all|yes|no\`、\`limit\`、\`cursor\`。
 
 ## 待办请求体
@@ -187,12 +193,17 @@ const ADMIN_DOCS = `## 当前凭据角色：管理员
 
 使用 \`/api/v1/admin\` 前缀。所有 POST、PATCH、DELETE 都要求请求 Origin 与 APP_ORIGIN 相同。
 
+普通和总管 Agent 签发密钥时，expires_at 省略或为 null 表示无限期；明文仍只返回一次。
+管理员可 POST /api/v1/auth/change-secret，正文为 { "current_secret": "当前密钥", "new_secret": "新密钥" }。新密钥须为 32–1024 个字符且不同于旧密钥；成功返回 204、清除 Cookie 并撤销全部旧管理员会话，Agent 密钥不受影响。此接口要求管理员会话、同源和限流。
+
 - \`GET|POST /api/v1/admin/agents\`；\`PATCH /api/v1/admin/agents/{id}\`：列出、创建和配置 Agent。
 - \`POST /api/v1/admin/agents/{id}/enable|disable|remove|restore\`；\`DELETE /api/v1/admin/agents/{id}\`：生命周期和分步删除。
 - \`GET|POST /api/v1/admin/agents/{id}/keys\`；\`DELETE /api/v1/admin/agents/{id}/keys/{key_id}\`：密钥轮换。新密钥明文只返回一次。
 - \`GET /api/v1/admin/entries\`；\`POST /api/v1/admin/agents/{agent_id}/entries\`：跨 Agent 读取或创建条目。
 - \`GET /api/v1/admin/entries/{id}\`；\`GET|POST /api/v1/admin/entries/{id}/versions\`；\`GET /api/v1/admin/entries/{id}/versions/{version}\`：详情与版本。
 - \`PATCH /api/v1/admin/entries/{id}/state\`：修改 archived、read_version、completed；完成时间由服务器生成。
+- \`POST /api/v1/admin/entries/read\`：正文为条目筛选字段（不含 view、order、cursor、limit），一次标记范围内所有页的当前版本，返回 \`{ updated: number }\`。无筛选表示所有条目，前端按栏目传入筛选。状态属于条目，全局共享；后续追加版本仍为未读。
+- \`GET /api/v1/admin/entries/counts\`：返回 unread、important_unread、archived、open_tasks，数据库汇总，不受分页限制。
 - \`DELETE /api/v1/admin/entries/{id}\`：永久删除整条记录；关联待办保留并解除来源。
 - \`GET|POST /api/v1/admin/tasks\`；\`PATCH|DELETE /api/v1/admin/tasks/{id}\`：全部待办。无来源且未指定 agent_id 时归入 manual。
 - \`POST /api/v1/admin/agents/{agent_id}/attachments\`：为目标 Agent 上传图片。

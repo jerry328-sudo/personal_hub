@@ -30,6 +30,7 @@ export type AdminSessionInsert = {
   tokenHash: string;
   createdAt: string;
   expiresAt: string;
+  credentialRevision?: number;
 };
 
 export type AdminSessionRecord = AdminSessionInsert & {
@@ -193,7 +194,6 @@ export async function insertKey(db: D1Database, record: AgentKeyInsert): Promise
          WHERE id = ?
            AND id <> 'manual'
            AND status IN ('active', 'disabled')
-           AND (scope <> 'all' OR ? IS NOT NULL)
        )
        AND (
          SELECT COUNT(*)
@@ -210,7 +210,6 @@ export async function insertKey(db: D1Database, record: AgentKeyInsert): Promise
       record.createdAt,
       record.expiresAt,
       record.agentId,
-      record.expiresAt,
       record.agentId,
       record.createdAt,
       MAX_LIVE_KEYS_PER_AGENT,
@@ -299,13 +298,17 @@ export async function touchKeyUsage(
 }
 
 export async function insertSession(db: D1Database, record: AdminSessionInsert): Promise<void> {
-  await db
+  const inserted = await db
     .prepare(
-      `INSERT INTO admin_sessions (id, token_hash, created_at, expires_at)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT INTO admin_sessions (id, token_hash, created_at, expires_at, credential_revision)
+       SELECT ?, ?, ?, ?, ?
+       WHERE EXISTS (SELECT 1 FROM admin_credentials WHERE id = 1 AND revision = ?)
+       RETURNING id`,
     )
-    .bind(record.id, record.tokenHash, record.createdAt, record.expiresAt)
-    .run();
+    .bind(record.id, record.tokenHash, record.createdAt, record.expiresAt,
+      record.credentialRevision ?? 0, record.credentialRevision ?? 0)
+    .first<IdRow>();
+  if (!inserted) throw conflict("登录密钥已变更，请使用新密钥重新登录");
 }
 
 export async function findSession(
@@ -316,7 +319,7 @@ export async function findSession(
     .prepare(
       `SELECT id, token_hash, created_at, expires_at, revoked_at
        FROM admin_sessions
-       WHERE id = ?
+       WHERE id = ? AND credential_revision = (SELECT revision FROM admin_credentials WHERE id = 1)
        LIMIT 1`,
     )
     .bind(sessionId)
@@ -350,4 +353,31 @@ export async function deleteExpiredSessions(db: D1Database, expiredAt: string): 
     .run();
 
   return result.meta.changes ?? 0;
+}
+
+export interface AdminCredentialRecord {
+  secret_hash: string | null;
+  revision: number;
+}
+
+export async function findAdminCredential(db: D1Database): Promise<AdminCredentialRecord> {
+  const row = await db.prepare("SELECT secret_hash, revision FROM admin_credentials WHERE id = 1")
+    .first<AdminCredentialRecord>();
+  if (!row) throw new Error("管理员凭据配置缺失，请检查数据库迁移");
+  return row;
+}
+
+export async function rotateAdminCredential(
+  db: D1Database, sessionId: string, revision: number, digest: string, now: string,
+): Promise<boolean> {
+  const results = await db.batch<{ revision: number }>([
+    db.prepare(`UPDATE admin_credentials SET secret_hash = ?, revision = revision + 1, updated_at = ?
+      WHERE id = 1 AND revision = ? AND EXISTS (
+        SELECT 1 FROM admin_sessions WHERE id = ? AND revoked_at IS NULL
+        AND expires_at > ? AND credential_revision = ?
+      ) RETURNING revision`).bind(digest, now, revision, sessionId, now, revision),
+    db.prepare(`UPDATE admin_sessions SET revoked_at = COALESCE(revoked_at, ?)
+      WHERE credential_revision < (SELECT revision FROM admin_credentials WHERE id = 1)`).bind(now),
+  ]);
+  return results[0]?.results.length === 1;
 }

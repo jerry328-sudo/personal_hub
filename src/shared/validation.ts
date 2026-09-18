@@ -68,7 +68,12 @@ export const loginSchema = z.object({
   secret: z.string().min(1).max(1024),
 }).strict();
 
-export const entryQuerySchema = z.object({
+export const changeAdminSecretSchema = z.object({
+  current_secret: z.string().min(1).max(1024),
+  new_secret: z.string().min(32).max(1024),
+}).strict().refine((value) => value.current_secret !== value.new_secret, "新密钥不能与旧密钥相同");
+
+const entryQueryObject = z.object({
   agent_id: z.string().min(1).optional(),
   view: z.enum(["brief", "full"]).optional(),
   completion: z.enum(["all", "open", "done"]).optional(),
@@ -78,7 +83,17 @@ export const entryQuerySchema = z.object({
   cursor: z.string().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(LIMITS.maxPageSize).optional(),
   query: z.string().trim().max(200).optional(),
+  read: z.enum(["all", "unread", "updated", "read"]).optional(),
+  start: isoDateTime.optional(),
+  end: isoDateTime.optional(),
+  time_field: z.enum(["updated", "created", "archived", "completed"]).optional(),
 }).strict();
+
+const validTimeRange = (value: { start?: string; end?: string }) => !value.start || !value.end || Date.parse(value.start) < Date.parse(value.end);
+export const entryQuerySchema = entryQueryObject.refine(validTimeRange, "开始时间必须早于结束时间");
+
+// Bulk actions accept filters only; a page cursor must never narrow their scope.
+export const markReadQuerySchema = entryQueryObject.omit({ cursor: true, limit: true, view: true, order: true }).refine(validTimeRange, "开始时间必须早于结束时间");
 
 export const taskQuerySchema = z.object({
   agent_id: z.string().min(1).optional(),

@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
 import type { AgentDto, EntryFullDto, EntryVersionDto } from "../../shared/contracts";
-import { attachmentsApi, entriesApi, notifyDataChanged } from "../api";
+import { attachmentsApi, entriesApi, notifyDataChanged, subscribeDataChanged } from "../api";
 import { formatDateTime } from "../lib/format";
 import { MarkdownContent } from "./MarkdownContent";
 import { TaskForm } from "./TaskForm";
@@ -64,6 +64,8 @@ export function EntryReader({ entryId, agents, onChanged, onBack, embedded = fal
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
+
+  useEffect(() => subscribeDataChanged(() => { void load(); }), [load]);
 
   useEffect(() => {
     if (!entry || selectedVersion === null || selectedVersion === entry.version) {

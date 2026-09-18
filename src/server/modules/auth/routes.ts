@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { ZodError, type ZodType } from "zod";
-import { issueKeySchema, loginSchema } from "../../../shared/validation";
+import { changeAdminSecretSchema, issueKeySchema, loginSchema } from "../../../shared/validation";
 import type { AppEnv } from "../../env";
 import { serviceContext } from "../../env";
 import { badRequest, forbidden } from "../../shared/errors";
@@ -13,6 +13,7 @@ import { LIMITS } from "../../../shared/limits";
 import { requireAdminSession } from "./middleware";
 import {
   getAdminSession,
+  changeAdminSecret,
   issueAgentKey,
   listAgentKeys,
   loginAdmin,
@@ -52,6 +53,13 @@ function privateResponse(response: Response): Response {
 }
 
 export function registerAuthRoutes(app: Hono<AppEnv>): void {
+  app.post("/api/v1/auth/change-secret", requireAdminSession(), async (c) => {
+    sameOrigin(c.req.raw, c.env.APP_ORIGIN);
+    const body = await readLimitedJson(c.req.raw, LIMITS.jsonRequestBytes);
+    const input = parseBody(changeAdminSecretSchema, body);
+    const cookie = await changeAdminSecret(serviceContext(c), c.req.raw, input);
+    return privateResponse(new Response(null, { status: 204, headers: { "Set-Cookie": cookie } }));
+  });
   app.post("/api/v1/auth/login", async (c) => {
     sameOrigin(c.req.raw, c.env.APP_ORIGIN);
     const body = await readLimitedJson(c.req.raw, LIMITS.jsonRequestBytes);

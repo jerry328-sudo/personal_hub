@@ -1,5 +1,5 @@
-import { ListTodo, Menu } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ListTodo, Menu, Search } from "lucide-react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { CompletionFilter, DisplayMode, EntryFullDto } from "../../shared/contracts";
 import { agentsApi, notifyDataChanged } from "../api";
@@ -9,6 +9,7 @@ import { CompletionTabs, FeedView, ListView, ReportView } from "../components/En
 import { AgentBadge, EmptyState, ErrorState, LoadingState, useToast } from "../components/ui";
 import { useEntries } from "../hooks/useEntries";
 import { relativeTime } from "../lib/format";
+import { EntryPagination, MarkReadButton } from "../components/MarkReadButton";
 
 export function AgentPage() {
   const { agentId = "" } = useParams();
@@ -18,20 +19,24 @@ export function AgentPage() {
   const [completion, setCompletion] = useState<CompletionFilter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reading, setReading] = useState(false);
+  const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search.trim());
   const query = useMemo(() => ({
     agent_id: agentId,
     view: "full" as const,
     completion,
-    archived: "all" as const,
+    archived: "no" as const,
+    query: deferredSearch || undefined,
     order: agent?.display_mode === "list" ? "created_asc" as const : "updated_desc" as const,
     limit: 100,
-  }), [agent?.display_mode, agentId, completion]);
+  }), [agent?.display_mode, agentId, completion, deferredSearch]);
   const result = useEntries<EntryFullDto>(query);
 
   useEffect(() => {
     setSelectedId(null);
     setReading(false);
     setCompletion("all");
+    setSearch("");
   }, [agentId]);
   useEffect(() => {
     if (!selectedId || !result.items.some((entry) => entry.id === selectedId)) {
@@ -62,6 +67,7 @@ export function AgentPage() {
       <AgentBadge name={agent.name} index={agents.indexOf(agent)} size="large" />
       <div className="agent-board-title"><h1>{agent.name}</h1><p>{agent.description || "暂无说明"}</p></div>
       <span className="spacer" />
+      <MarkReadButton query={query} />
       <label className="layout-field">展示方式
         <select value={mode} onChange={(event) => void updateAgent({ display_mode: event.target.value as DisplayMode })}>
           <option value="feed">信息流</option><option value="list">清单</option><option value="report">报告</option>
@@ -78,9 +84,9 @@ export function AgentPage() {
           <div className="completion-row"><CompletionTabs value={completion} onChange={setCompletion} /></div>
           <div className="entries-scroll">
             {result.loading ? <LoadingState /> : result.error ? <ErrorState message={result.error} onRetry={result.refresh} /> : <FeedView entries={result.items} agents={agents} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setReading(true); }} />}
-            {result.nextCursor ? <button className="load-more" type="button" onClick={result.loadMore} disabled={result.loadingMore}>{result.loadingMore ? "正在读取…" : "加载更多"}</button> : null}
           </div>
-          <footer className="entry-count">{loadedCount} 条信息 · 最近上报 {relativeTime(agent.last_report_at)}</footer>
+          <EntryPagination result={result} />
+          <footer className="entry-count">本页 {loadedCount} 条信息 · 最近上报 {relativeTime(agent.last_report_at)}</footer>
         </section>
         <section className="reader-pane">
           {selectedId ? <EntryReader entryId={selectedId} agents={agents} onChanged={result.refresh} onBack={() => setReading(false)} /> : <EmptyState title="选择一条信息" />}
@@ -98,14 +104,15 @@ export function AgentPage() {
         <CompletionTabs value={completion} onChange={setCompletion} />
         <Link className="text-action task-link" to={`/tasks?agent=${encodeURIComponent(agent.id)}`}><ListTodo aria-hidden="true" />查看关联待办</Link>
       </div>
+      <label className="search-field board-search"><Search aria-hidden="true" /><span className="sr-only">搜索当前 Agent</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索当前 Agent 的内容" /></label>
       {result.loading ? <LoadingState /> : result.error ? <ErrorState message={result.error} onRetry={result.refresh} /> : <>
         {mode === "list" ? (
           <ListView entries={result.items} agents={agents} onChanged={result.refresh} />
         ) : (
-          <ReportView entries={result.items} agents={agents} mainEntryId={agent.main_entry_id} onMainEntryChange={async (id) => { await updateAgent({ main_entry_id: id }); }} onChanged={result.refresh} />
+          <ReportView entries={result.items} agents={agents} mainEntryId={result.items.some((entry) => entry.id === agent.main_entry_id) ? agent.main_entry_id : null} onMainEntryChange={async (id) => { await updateAgent({ main_entry_id: id }); }} onChanged={result.refresh} />
         )}
-        {result.nextCursor ? <button className="load-more" type="button" onClick={result.loadMore} disabled={result.loadingMore}>{result.loadingMore ? "正在读取…" : "加载更多"}</button> : null}
       </>}
+      <EntryPagination result={result} />
     </div>
   );
 }

@@ -2,10 +2,12 @@ import type {
   AgentKeyMetadataDto,
   IssuedKeyDto,
   SessionDto,
+  ChangeAdminSecretInput,
 } from "../../../shared/contracts";
 import type { Actor, AgentActor, ServiceContext } from "../../env";
 import {
   conflict,
+  badRequest,
   forbidden,
   notFound,
   rateLimited,
@@ -23,10 +25,14 @@ import {
   parseSessionToken,
   SESSION_COOKIE_NAME,
   verifyAdminSecret,
+  hashAdminLoginSecret,
+  verifyAdminLoginHash,
   verifyCredential,
 } from "./crypto";
 import {
   deleteExpiredSessions,
+  findAdminCredential,
+  rotateAdminCredential,
   findAgentKeyTarget,
   findKeyWithAgent,
   findSession,
@@ -156,7 +162,11 @@ export async function loginAdmin(
   input: LoginInput,
 ): Promise<LoginResult> {
   await checkLoginRateLimit(env, request);
-  if (!(await verifyAdminSecret(input.secret, env.ADMIN_LOGIN_SECRET))) {
+  const credential = await findAdminCredential(env.DB);
+  const valid = credential.secret_hash === null
+    ? await verifyAdminSecret(input.secret, env.ADMIN_LOGIN_SECRET)
+    : await verifyAdminLoginHash(input.secret, credential.secret_hash, env.AUTH_PEPPER);
+  if (!valid) {
     throw unauthenticated("管理员密钥无效");
   }
 
@@ -174,6 +184,7 @@ export async function loginAdmin(
     tokenHash,
     createdAt,
     expiresAt,
+    credentialRevision: credential.revision,
   });
 
   const token = formatSessionToken(id, secret);
@@ -290,6 +301,25 @@ export async function logoutAdmin(ctx: ServiceContext): Promise<string> {
   return clearSessionCookie();
 }
 
+export async function changeAdminSecret(
+  ctx: ServiceContext, request: Request, input: ChangeAdminSecretInput,
+): Promise<string> {
+  requireAdminActor(ctx);
+  await checkLoginRateLimit(ctx.env, request);
+  const credential = await findAdminCredential(ctx.env.DB);
+  const valid = credential.secret_hash === null
+    ? await verifyAdminSecret(input.current_secret, ctx.env.ADMIN_LOGIN_SECRET)
+    : await verifyAdminLoginHash(input.current_secret, credential.secret_hash, ctx.env.AUTH_PEPPER);
+  if (!valid) throw forbidden("当前登录密钥不正确");
+  if (input.new_secret.length < 32 || input.new_secret.length > 1024 || input.new_secret === input.current_secret) {
+    throw badRequest("新密钥需为 32–1024 个字符，且不能与旧密钥相同");
+  }
+  const digest = await hashAdminLoginSecret(input.new_secret, ctx.env.AUTH_PEPPER);
+  const changed = await rotateAdminCredential(ctx.env.DB, ctx.actor.sessionId, credential.revision, digest, nowIso());
+  if (!changed) throw conflict("凭据或会话已变更，请重新登录");
+  return clearSessionCookie();
+}
+
 export async function prepareAgentKey(
   env: CloudflareBindings,
   agentId: string,
@@ -330,9 +360,6 @@ export async function issueAgentKey(
   requireUsableKeyTarget(target);
 
   const expiresAt = input.expires_at ?? null;
-  if (target.scope === "all" && expiresAt === null) {
-    throw conflict("总管 Agent 的密钥必须设置到期时间");
-  }
   const prepared = await prepareAgentKey(ctx.env, agentId, expiresAt);
   await insertKey(ctx.env.DB, prepared.record);
   return prepared.plaintext;

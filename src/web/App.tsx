@@ -8,6 +8,7 @@ import { EntryPage } from "./pages/EntryPage";
 import { InboxPage } from "./pages/InboxPage";
 import { LoginPage } from "./pages/LoginPage";
 import { TasksPage } from "./pages/TasksPage";
+import { SecurityPage } from "./pages/SecurityPage";
 
 function ProtectedApp() {
   const location = useLocation();
@@ -22,13 +23,14 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedApp />}>
-        <Route index element={<InboxPage kind="all" />} />
-        <Route path="important" element={<InboxPage kind="important" />} />
-        <Route path="archive" element={<InboxPage kind="archive" />} />
+        <Route index element={<InboxPage key="all" kind="all" />} />
+        <Route path="important" element={<InboxPage key="important" kind="important" />} />
+        <Route path="archive" element={<InboxPage key="archive" kind="archive" />} />
         <Route path="agents/:agentId" element={<AgentPage />} />
         <Route path="entries/:entryId" element={<EntryPage />} />
         <Route path="tasks" element={<TasksPage />} />
         <Route path="admin/agents" element={<AgentsPage />} />
+        <Route path="admin/security" element={<SecurityPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

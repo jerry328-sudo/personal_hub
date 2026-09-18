@@ -1,6 +1,8 @@
 # 部署、迁移与恢复手册
 
-本文是 Personal Hub 的 staging 与 production 运维流程。它描述待执行步骤，不表示任何 Cloudflare Worker、D1 数据库或 R2 桶已经创建或部署。
+自定义域名和鉴权变更已发布，生产已应用 `0003_admin_credentials.sql`，见[更新发布记录](releases/pending-domain-auth.md)。后续远程迁移或重新部署仍需用户明确授权。
+
+本文是 Personal Hub 的 staging 与 production 运维流程。production 已于 2026-09-18 首次部署并完成线上 API 检查；staging 尚未创建。实际资源、版本和检查结果见 [部署记录](releases/2026-09-18-production.md)。下文创建步骤仅在新增环境时执行，不要重复创建已有生产资源。
 
 ## 1. 环境模型
 

@@ -1,10 +1,12 @@
 # Personal Hub
 
+已发布：自定义域名 `personal-hub.echem.ai`、普通/总管 Agent 无限期密钥、管理员在线修改登录密钥和网站图标。详见[更新发布记录](docs/releases/pending-domain-auth.md)。Agent 密钥仍仅展示一次；在线更换管理员密钥后旧会话全部失效。
+
 Personal Hub 是一个运行在 Cloudflare Workers 上的个人信息中心。外部 Agent 通过独立密钥提交和更新信息，管理员在网页中统一查看条目、历史版本、私有图片、待办与完成状态。
 
 ## 当前状态
 
-首版完整代码已经落地：Hono Worker API、React 管理网页、D1 初始迁移、私有 R2 附件流程以及单元/集成测试均在仓库中。当前 `wrangler.jsonc` 使用本地模拟资源和占位 D1 UUID；尚未创建或部署任何远程 Cloudflare Worker、D1 数据库或 R2 桶。
+完整代码包含 Hono Worker API、React 管理网页、D1 迁移、私有 R2 附件流程以及单元/集成测试。生产环境已于 2026-09-18 更新至 https://personal-hub.echem.ai ，原 workers.dev 入口关闭。`wrangler.jsonc` 顶层仍使用本地模拟资源，`env.production` 绑定真实 D1 与私有 R2；staging 尚未创建。首次发布历史见[初次部署记录](docs/releases/2026-09-18-production.md)。
 
 ## 最短本地启动
 

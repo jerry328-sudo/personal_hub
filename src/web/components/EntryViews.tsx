@@ -1,5 +1,5 @@
-import { ChevronDown, CircleCheck, Search } from "lucide-react";
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { ChevronDown, CircleCheck } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import type { AgentDto, CompletionFilter, EntryBriefDto, EntryFullDto } from "../../shared/contracts";
 import { entriesApi, notifyDataChanged } from "../api";
 import { formatDay, formatTime, isEntryUnread, isEntryUpdated, previewText } from "../lib/format";
@@ -93,12 +93,7 @@ export function FeedView({
 export function ListView({ entries, agents, onChanged }: { entries: EntryFullDto[]; agents: AgentDto[]; onChanged: () => void }) {
   const { showToast } = useToast();
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const deferredSearch = useDeferredValue(search.trim().toLowerCase());
-  const filtered = useMemo(() => entries.filter((entry) => {
-    if (!deferredSearch) return true;
-    return `${entry.title} ${entry.content}`.toLowerCase().includes(deferredSearch);
-  }), [deferredSearch, entries]);
+  const filtered = entries;
 
   const toggleCompleted = async (entry: EntryFullDto) => {
     try {
@@ -113,7 +108,6 @@ export function ListView({ entries, agents, onChanged }: { entries: EntryFullDto
 
   return (
     <div className="list-view">
-      <label className="search-field board-search"><Search aria-hidden="true" /><span className="sr-only">搜索当前 Agent</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索当前 Agent 的内容" /></label>
       {filtered.length ? filtered.map((entry) => (
         <section className={`check-entry ${entry.completed ? "is-done" : ""}`} key={entry.id}>
           <div className="check-line">

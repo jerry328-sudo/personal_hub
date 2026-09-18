@@ -42,7 +42,7 @@ AUTH_PEPPER=使用另一份独立的高强度随机值
 node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
 ```
 
-`ADMIN_LOGIN_SECRET` 是网页登录密钥；`AUTH_PEPPER` 用于 Agent Key 和 Session 的 HMAC 摘要。两者不得相同，也不能使用 staging 或 production 的值。
+`ADMIN_LOGIN_SECRET` 是首次在线修改前的网页登录引导密钥；修改后以 D1 中的摘要为准。`AUTH_PEPPER` 用于 Agent Key、Session 和在线设置的管理员密钥的 HMAC 摘要。两者不得相同，也不能使用 staging 或 production 的值。
 
 `.dev.vars` 已被 `.gitignore` 忽略。不要把秘密写入 `wrangler.jsonc`、前端环境变量、测试 fixture、日志或提交记录。`wrangler.jsonc` 已用 `secrets.required` 声明这两个名称，因此缺少配置会在本地工具中被明确报告。项目使用 `.dev.vars` 后不要再用 `.env` 提供 Worker 秘密，避免不同加载规则造成误判。Cloudflare Vite 插件会在本地开发时加载该文件，详见 [Cloudflare Vite 插件的 Secrets 文档](https://developers.cloudflare.com/workers/vite-plugin/reference/secrets/)。
 

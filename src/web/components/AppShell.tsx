@@ -1,5 +1,6 @@
 import {
   Archive,
+  KeyRound,
   Inbox,
   LogOut,
   Menu,
@@ -12,8 +13,8 @@ import {
 } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import type { AgentDto, EntryBriefDto } from "../../shared/contracts";
-import { agentsApi, entriesApi, tasksApi } from "../api";
+import type { AgentDto } from "../../shared/contracts";
+import { agentsApi, entriesApi, subscribeDataChanged } from "../api";
 import { useSession } from "../hooks/useSession";
 import { useTheme } from "../hooks/useTheme";
 import type { ThemeMode } from "../lib/theme";
@@ -46,10 +47,7 @@ export function AppShell() {
   const [navOpen, setNavOpen] = useState(false);
   const [agents, setAgents] = useState<AgentDto[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
-  const [entries, setEntries] = useState<EntryBriefDto[]>([]);
-  const [entriesTruncated, setEntriesTruncated] = useState(false);
-  const [openTasks, setOpenTasks] = useState(0);
-  const [openTasksTruncated, setOpenTasksTruncated] = useState(false);
+  const [counts, setCounts] = useState({ unread: 0, important_unread: 0, archived: 0, open_tasks: 0 });
   const [revision, setRevision] = useState(0);
 
   const refreshShell = useCallback(() => setRevision((value) => value + 1), []);
@@ -59,28 +57,18 @@ export function AppShell() {
     setAgentsLoading(true);
     void Promise.allSettled([
       agentsApi.listAll({ status: "all", limit: 100 }, controller.signal),
-      entriesApi.list<EntryBriefDto>({ view: "brief", archived: "all", completion: "all", limit: 100, order: "updated_desc" }, controller.signal),
-      tasksApi.list({ done: "no", limit: 100 }, controller.signal),
-    ]).then(([agentResult, entryResult, taskResult]) => {
+      entriesApi.counts(controller.signal),
+    ]).then(([agentResult, countResult]) => {
       if (controller.signal.aborted) return;
       if (agentResult.status === "fulfilled") setAgents(agentResult.value);
-      if (entryResult.status === "fulfilled") {
-        setEntries(entryResult.value.items);
-        setEntriesTruncated(entryResult.value.next_cursor !== null);
-      }
-      if (taskResult.status === "fulfilled") {
-        setOpenTasks(taskResult.value.items.length);
-        setOpenTasksTruncated(taskResult.value.next_cursor !== null);
-      }
+      if (countResult.status === "fulfilled") setCounts(countResult.value);
       setAgentsLoading(false);
     });
-    const onDataChanged = () => refreshShell();
-    window.addEventListener("personal-hub:data-changed", onDataChanged);
     return () => {
       controller.abort();
-      window.removeEventListener("personal-hub:data-changed", onDataChanged);
     };
   }, [refreshShell, revision]);
+  useEffect(() => subscribeDataChanged(refreshShell), [refreshShell]);
 
   useEffect(() => {
     const close = () => setNavOpen(false);
@@ -93,14 +81,8 @@ export function AppShell() {
     };
   }, []);
 
-  const counts = useMemo(() => ({
-    all: entries.filter((entry) => !entry.archived).length,
-    important: entries.filter((entry) => entry.important && !entry.archived).length,
-    archive: entries.filter((entry) => entry.archived).length,
-  }), [entries]);
   const visibleAgents = agents.filter((agent) => agent.id !== "manual" && agent.scope === "own" && agent.status !== "removed" && agent.status !== "deleting");
   const context = useMemo(() => ({ agents, agentsLoading, refreshShell, openNavigation: () => setNavOpen(true) }), [agents, agentsLoading, refreshShell]);
-  const countLabel = (value: number, truncated: boolean) => truncated ? (value > 0 ? `${value}+` : "…") : String(value);
 
   const signOut = async () => {
     try {
@@ -122,10 +104,10 @@ export function AppShell() {
             <button className="icon-btn close-nav" type="button" onClick={() => setNavOpen(false)} aria-label="关闭导航"><X aria-hidden="true" /></button>
           </div>
           <nav className="nav" onClick={() => setNavOpen(false)}>
-            <NavLink to="/" end className={navClass}><Inbox aria-hidden="true" /><span>全部信息</span><span className="count">{countLabel(counts.all, entriesTruncated)}</span></NavLink>
-            <NavLink to="/important" className={navClass}><Star aria-hidden="true" /><span>重要信息</span><span className="count">{countLabel(counts.important, entriesTruncated)}</span></NavLink>
-            <NavLink to="/tasks" className={navClass}><SquareCheck aria-hidden="true" /><span>待办</span><span className="count">{countLabel(openTasks, openTasksTruncated)}</span></NavLink>
-            <NavLink to="/archive" className={navClass}><Archive aria-hidden="true" /><span>归档</span><span className="count">{countLabel(counts.archive, entriesTruncated)}</span></NavLink>
+            <NavLink to="/" end className={navClass}><Inbox aria-hidden="true" /><span>全部信息</span><span className="count" title="未读信息">{counts.unread}</span></NavLink>
+            <NavLink to="/important" className={navClass}><Star aria-hidden="true" /><span>重要信息</span><span className="count" title="未读重要信息">{counts.important_unread}</span></NavLink>
+            <NavLink to="/tasks" className={navClass}><SquareCheck aria-hidden="true" /><span>待办</span><span className="count">{counts.open_tasks}</span></NavLink>
+            <NavLink to="/archive" className={navClass}><Archive aria-hidden="true" /><span>归档</span><span className="count">{counts.archived}</span></NavLink>
           </nav>
           <div className="agent-section">
             <div className="section-caption"><span>我的 AGENT</span></div>
@@ -141,6 +123,7 @@ export function AppShell() {
             </nav>
           </div>
           <div className="sidebar-footer">
+            <NavLink to="/admin/security" className={navClass} onClick={() => setNavOpen(false)}><KeyRound aria-hidden="true" /><span>登录与安全</span></NavLink>
             <NavLink to="/admin/agents" className={navClass} onClick={() => setNavOpen(false)}><Settings aria-hidden="true" /><span>Agent 管理</span></NavLink>
             <label className="theme-control"><span><ThemeIcon mode={mode} />外观</span>
               <select value={mode} onChange={(event) => setMode(event.target.value as ThemeMode)} aria-label="外观模式">

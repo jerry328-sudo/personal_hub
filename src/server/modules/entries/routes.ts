@@ -7,6 +7,7 @@ import {
   appendVersionSchema,
   createEntrySchema,
   entryQuerySchema,
+  markReadQuerySchema,
   patchEntryStateSchema,
   type EntryQuery,
 } from "../../../shared/validation";
@@ -21,11 +22,13 @@ import {
   getEntry,
   getEntryVersion,
   listEntries,
+  markEntriesRead,
   listEntryVersions,
   updateEntryState,
   type EntryAudience,
   type VersionPageQuery,
 } from "./service";
+import { entryCounts } from "./repository";
 
 const entityIdSchema = z.string().trim().min(1).max(200);
 const versionSchema = z.string().regex(/^[1-9]\d*$/).transform(Number).refine(Number.isSafeInteger);
@@ -164,6 +167,18 @@ export function registerEntryRoutes(app: Hono<AppEnv>): void {
   app.get("/api/v1/manager/entries/:id/versions/:version", versionDetailHandler("manager"));
 
   app.get("/api/v1/admin/entries", listHandler("admin"));
+  app.get("/api/v1/admin/entries/counts", async (c) => {
+    privateResponse(c);
+    requireAdminActor(c.get("actor"));
+    return c.json(await entryCounts(c.env.DB));
+  });
+  app.post("/api/v1/admin/entries/read", async (c) => {
+    privateResponse(c);
+    requireAdminActor(c.get("actor"));
+    requireSameOrigin(c.req.raw, c.env.APP_ORIGIN);
+    const filters = await parseJson(c, markReadQuerySchema);
+    return c.json(await markEntriesRead(serviceContext(c), filters));
+  });
   app.get("/api/v1/admin/entries/:id", detailHandler("admin"));
   app.post("/api/v1/admin/agents/:agentId/entries", async (c) => {
     privateResponse(c);

@@ -21,6 +21,10 @@ export interface CurrentEntryQuery {
   important: TernaryFilter;
   order: EntryListOrder;
   query?: string;
+  read?: "all" | "unread" | "updated" | "read";
+  start?: string;
+  end?: string;
+  time_field?: "updated" | "created" | "archived" | "completed";
   cursor: string[] | null;
   limit: number;
 }
@@ -49,6 +53,7 @@ type CurrentEntryRow = {
   agent_id: string;
   entry_created_at: string;
   archived: number;
+  archived_at: string | null;
   read_version: number;
   completed: number;
   completed_at: string | null;
@@ -71,12 +76,13 @@ type VersionRow = {
   important: number;
   created_at: string;
   archived: number;
+  archived_at: string | null;
   read_version: number;
   completed: number;
   completed_at: string | null;
 };
 
-type VersionBriefRow = Omit<VersionRow, "content" | "url" | "archived" | "read_version" | "completed" | "completed_at">;
+type VersionBriefRow = Omit<VersionRow, "content" | "url" | "archived" | "archived_at" | "read_version" | "completed" | "completed_at">;
 
 type EntryWriteRow = {
   id: string;
@@ -94,6 +100,7 @@ type OwnerWriteRow = {
 
 type StateRow = {
   archived: number;
+  archived_at: string | null;
   read_version: number;
   completed: number;
   completed_at: string | null;
@@ -116,6 +123,7 @@ function escapeLike(value: string): string {
 function mapState(row: StateRow): EntryStateDto {
   return {
     archived: boolFromDb(row.archived),
+    archived_at: row.archived_at,
     read_version: row.read_version,
     completed: boolFromDb(row.completed),
     completed_at: row.completed_at,
@@ -152,11 +160,10 @@ function mapVersionRow(row: VersionRow): EntryVersionDto {
   };
 }
 
-export async function listCurrentEntries(
-  db: D1Database,
+function entryFilters(
   scope: ReadScope,
   query: CurrentEntryQuery,
-): Promise<CurrentEntryPageRows> {
+): { where: string[]; bindings: unknown[] } {
   const where: string[] = [];
   const bindings: unknown[] = [];
   addScopeWhere(scope, where, bindings);
@@ -178,6 +185,49 @@ export async function listCurrentEntries(
     where.push("(v.title LIKE ? ESCAPE '\\' OR v.content LIKE ? ESCAPE '\\')");
     bindings.push(pattern, pattern);
   }
+
+  if (query.read === "unread") where.push("e.read_version < v.version");
+  if (query.read === "updated") where.push("e.read_version > 0 AND e.read_version < v.version");
+  if (query.read === "read") where.push("e.read_version >= v.version");
+  const timeColumn = { updated: "v.created_at", created: "e.created_at", archived: "e.archived_at", completed: "e.completed_at" }[query.time_field ?? "updated"];
+  if (query.start) { where.push(`${timeColumn} >= ?`); bindings.push(query.start); }
+  if (query.end) { where.push(`${timeColumn} < ?`); bindings.push(query.end); }
+  return { where, bindings };
+}
+
+export async function markMatchingEntriesRead(db: D1Database, scope: ReadScope, query: CurrentEntryQuery): Promise<number> {
+  const { where, bindings } = entryFilters(scope, query);
+  where.push("e.read_version < v.version", "a.status <> 'deleting'");
+  // One atomic statement captures current versions; later versions remain unread.
+  const result = await db.prepare(`
+    UPDATE entries SET read_version = (SELECT MAX(version) FROM entry_versions WHERE entry_id = entries.id)
+    WHERE id IN (
+      SELECT e.id FROM entries e JOIN agents a ON a.id = e.agent_id
+      JOIN entry_versions v ON v.entry_id = e.id
+        AND v.version = (SELECT MAX(version) FROM entry_versions WHERE entry_id = e.id)
+      WHERE ${where.join(" AND ")}
+    )
+  `).bind(...bindings).run();
+  return result.meta.changes ?? 0;
+}
+
+export async function entryCounts(db: D1Database) {
+  return db.prepare(`SELECT
+    COALESCE(SUM(CASE WHEN e.archived = 0 AND e.read_version < v.version THEN 1 ELSE 0 END), 0) AS unread,
+    COALESCE(SUM(CASE WHEN e.archived = 0 AND v.important = 1 AND e.read_version < v.version THEN 1 ELSE 0 END), 0) AS important_unread,
+    COALESCE(SUM(e.archived), 0) AS archived,
+    (SELECT COUNT(*) FROM tasks WHERE done = 0) AS open_tasks
+    FROM entries e JOIN entry_versions v ON v.entry_id = e.id
+      AND v.version = (SELECT MAX(version) FROM entry_versions WHERE entry_id = e.id)
+  `).first<{ unread: number; important_unread: number; archived: number; open_tasks: number }>();
+}
+
+export async function listCurrentEntries(
+  db: D1Database,
+  scope: ReadScope,
+  query: CurrentEntryQuery,
+): Promise<CurrentEntryPageRows> {
+  const { where, bindings } = entryFilters(scope, query);
 
   if (query.cursor) {
     if (query.order === "id_asc") {
@@ -204,6 +254,7 @@ export async function listCurrentEntries(
       e.agent_id,
       e.created_at AS entry_created_at,
       e.archived,
+      e.archived_at,
       e.read_version,
       e.completed,
       e.completed_at,
@@ -249,6 +300,7 @@ export async function findCurrentEntry(
       e.agent_id,
       e.created_at AS entry_created_at,
       e.archived,
+      e.archived_at,
       e.read_version,
       e.completed,
       e.completed_at,
@@ -456,6 +508,7 @@ export async function findVersion(
       v.important,
       v.created_at,
       e.archived,
+      e.archived_at,
       e.read_version,
       e.completed,
       e.completed_at
@@ -487,6 +540,8 @@ export async function patchEntryState(
   if (input.archived !== undefined) {
     set.push("archived = ?");
     bindings.push(input.archived ? 1 : 0);
+    set.push("archived_at = CASE WHEN ? = 1 THEN COALESCE(archived_at, ?) ELSE NULL END");
+    bindings.push(input.archived ? 1 : 0, completedAt);
   }
   if (input.read_version !== undefined) {
     set.push("read_version = MAX(read_version, ?)");
@@ -509,7 +564,7 @@ export async function patchEntryState(
 
 export async function findEntryState(db: D1Database, entryId: string): Promise<EntryStateDto | null> {
   const row = await db.prepare(`
-    SELECT archived, read_version, completed, completed_at FROM entries WHERE id = ?
+    SELECT archived, archived_at, read_version, completed, completed_at FROM entries WHERE id = ?
   `).bind(entryId).first<StateRow>();
   return row ? mapState(row) : null;
 }
@@ -535,10 +590,11 @@ export async function findCurrentVersionNumber(db: D1Database, entryId: string):
 }
 
 export async function deleteEntryBatch(db: D1Database, entryId: string): Promise<boolean> {
-  const results = await db.batch([
+  const results = await db.batch<{ id: string }>([
     db.prepare("UPDATE agents SET main_entry_id = NULL WHERE main_entry_id = ?").bind(entryId),
     db.prepare("UPDATE tasks SET entry_id = NULL WHERE entry_id = ?").bind(entryId),
-    db.prepare("DELETE FROM entries WHERE id = ?").bind(entryId),
+    db.prepare("DELETE FROM entries WHERE id = ? RETURNING id").bind(entryId),
   ]);
-  return (results[2]?.meta.changes ?? 0) === 1;
+  // Cascading version deletions can increase meta.changes beyond one.
+  return results[2]?.results.some((row) => row.id === entryId) ?? false;
 }

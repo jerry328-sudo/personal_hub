@@ -40,5 +40,36 @@
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
+  },
+  "env": {
+    "production": {
+      "name": "personal-hub-production",
+      "account_id": "3cac11b1edee39fd49d98b0a808d6471",
+      "workers_dev": false,
+      "routes": [{ "pattern": "personal-hub.echem.ai", "custom_domain": true }],
+      "preview_urls": false,
+      "d1_databases": [{
+        "binding": "DB",
+        "database_name": "personal-hub-production",
+        "database_id": "93a3fde0-6930-40a3-a983-775a707c1851",
+        "migrations_dir": "migrations"
+      }],
+      "r2_buckets": [{
+        "binding": "MEDIA",
+        "bucket_name": "personal-hub-media-production"
+      }],
+      "ratelimits": [{
+        "name": "LOGIN_RATE_LIMITER",
+        "namespace_id": "918202601",
+        "simple": { "limit": 10, "period": 60 }
+      }],
+      "vars": {
+        "APP_ORIGIN": "https://personal-hub.echem.ai",
+        "SESSION_TTL_SECONDS": "604800"
+      },
+      "secrets": {
+        "required": ["ADMIN_LOGIN_SECRET", "AUTH_PEPPER"]
+      }
+    }
   }
 }

@@ -112,9 +112,6 @@ export async function createAgent(ctx: ServiceContext, input: CreateAgentInput):
   requireAdmin(ctx);
   const scope = input.scope ?? "own";
   const expiresAt = input.key_expires_at ?? null;
-  if (scope === "all" && expiresAt === null) {
-    throw conflict("总管 Agent 的密钥必须设置到期时间");
-  }
 
   const createdAt = nowIso();
   const agent: AgentDto = {

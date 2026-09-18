@@ -239,6 +239,24 @@ export async function verifyAdminSecret(candidate: string, configuredSecret: str
   return crypto.subtle.verify("HMAC", comparisonKey, submittedSignature, configuredDigest);
 }
 
+export async function hashAdminLoginSecret(secret: string, pepper: string): Promise<string> {
+  configuredAdminSecret(secret);
+  requirePepper(pepper);
+  const key = await importHmacKey(pepper);
+  const message = encodeLengthPrefixed(["personal-hub/admin-login/v1", secret]);
+  const digest = await crypto.subtle.sign("HMAC", key, toArrayBuffer(message));
+  return encodeBase64Url(new Uint8Array(digest));
+}
+
+export async function verifyAdminLoginHash(secret: string, digest: string, pepper: string): Promise<boolean> {
+  const signature = decodeBase64Url(digest);
+  if (!paddedSecret(secret) || !signature || signature.byteLength !== HMAC_BYTES) return false;
+  requirePepper(pepper);
+  const key = await importHmacKey(pepper);
+  const message = encodeLengthPrefixed(["personal-hub/admin-login/v1", secret]);
+  return crypto.subtle.verify("HMAC", key, toArrayBuffer(signature), toArrayBuffer(message));
+}
+
 export function formatAgentKey(id: string, secret: string): string {
   return formatToken(AGENT_KEY_PREFIX, id, secret);
 }

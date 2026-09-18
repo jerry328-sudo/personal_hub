@@ -30,6 +30,16 @@ function defaultExpiryDate(): string {
   return date.toISOString().slice(0, 10);
 }
 
+function KeyExpiryInput({ value, onChange, label }: { value: string; onChange: (value: string) => void; label: string }) {
+  return <label className="field">{label}
+    <select value={value ? "dated" : "forever"} onChange={(event) => onChange(event.target.value === "forever" ? "" : defaultExpiryDate())}>
+      <option value="dated">指定到期日</option><option value="forever">永不过期</option>
+    </select>
+    {value ? <input aria-label={`${label}日期`} type="date" required value={value} onChange={(event) => onChange(event.target.value)} /> : null}
+    <small>普通 Agent 和总管均可选择永不过期；密钥仍可随时撤销，明文仅显示一次。</small>
+  </label>;
+}
+
 function AgentForm({ open, agent, onClose, onSaved, onIssued }: {
   open: boolean;
   agent: AgentDto | null;
@@ -105,10 +115,7 @@ function AgentForm({ open, agent, onClose, onSaved, onIssued }: {
           </label>
         ) : null}
         {agent ? null : (
-          <label className="field">首把密钥到期日{scope === "own" ? "（可选）" : ""}
-            <input type="date" value={expires} required={scope === "all"} onChange={(event) => setExpires(event.target.value)} />
-            <small>总管密钥必须设置有效期。密钥创建后只显示一次。</small>
-          </label>
+          <KeyExpiryInput label="首把密钥有效期" value={expires} onChange={setExpires} />
         )}
         <div className="dialog-actions"><button className="btn" type="button" onClick={onClose}>取消</button><button className="btn primary" disabled={busy} type="submit">{busy ? "保存中…" : agent ? "保存修改" : "创建 Agent"}</button></div>
       </form>
@@ -180,7 +187,7 @@ function KeysDialog({ agent, open, onClose, onIssued }: { agent: AgentDto | null
       {agent ? <>
         <div className="connection-guide"><strong>接口入口</strong><code>GET /api</code><code>GET /api/docs</code><span>请求头使用 <code>Authorization: Bearer &lt;密钥&gt;</code>。普通 Agent 默认读取自己的全部记录，包括已完成与归档内容。</span></div>
         <div className="key-issue-row">
-          <label>新密钥到期日<input type="date" value={expires} required={agent.scope === "all"} onChange={(event) => setExpires(event.target.value)} /></label>
+          <KeyExpiryInput label="新密钥有效期" value={expires} onChange={setExpires} />
           <button className="btn primary" type="button" disabled={busy || agent.status === "removed" || agent.status === "deleting"} onClick={() => void issue()}><Plus aria-hidden="true" />签发新密钥</button>
         </div>
         <div className="key-list">

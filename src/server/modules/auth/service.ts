@@ -169,7 +169,12 @@ export async function loginAdmin(
   if (!valid) {
     throw unauthenticated("管理员密钥无效");
   }
+  return createAdminSession(env, credential.revision);
+}
 
+export async function createAdminSession(
+  env: CloudflareBindings, credentialRevision: number, passkeyId?: string,
+): Promise<LoginResult> {
   const createdAt = nowIso();
   const expiresAt = new Date(
     Date.parse(createdAt) + sessionTtlSeconds(env) * 1000,
@@ -184,7 +189,8 @@ export async function loginAdmin(
     tokenHash,
     createdAt,
     expiresAt,
-    credentialRevision: credential.revision,
+    credentialRevision,
+    ...(passkeyId ? { passkeyId } : {}),
   });
 
   const token = formatSessionToken(id, secret);

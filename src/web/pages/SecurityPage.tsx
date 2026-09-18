@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useAppShell } from "../components/AppShell";
 import { useToast } from "../components/ui";
 import { useSession } from "../hooks/useSession";
+import { PasskeySettings } from "../components/PasskeySettings";
 
 export function SecurityPage() {
   const { openNavigation } = useAppShell();
@@ -41,9 +42,10 @@ export function SecurityPage() {
 
   return <div className="security-page">
     <header className="security-heading"><button type="button" className="icon-btn" aria-label="打开导航" onClick={openNavigation}><Menu /></button><h1>登录与安全</h1></header>
+    <PasskeySettings />
     <section className="security-card" aria-labelledby="change-secret-title">
       <h2 id="change-secret-title">修改管理员登录密钥</h2>
-      <p>修改后，所有设备上的登录会话都会失效，需要使用新密钥重新登录。Agent 密钥不受影响。</p>
+      <p>修改后，所有设备上的登录会话及通行密钥绑定都会失效。请使用新密钥登录并重新绑定需要的设备。Agent 密钥不受影响。</p>
       <form onSubmit={(event) => void submit(event)}>
         <fieldset disabled={busy}>
           <label className="field">当前登录密钥<input type="password" autoComplete="current-password" required maxLength={1024} value={current} onChange={(event) => setCurrent(event.target.value)} /></label>

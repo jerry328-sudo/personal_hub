@@ -170,6 +170,13 @@ export interface SessionDto {
   expires_at: string;
 }
 
+export interface PasskeyDto {
+  id: string;
+  name: string;
+  created_at: string;
+  last_used_at: string | null;
+}
+
 export interface ChangeAdminSecretInput {
   current_secret: string;
   new_secret: string;

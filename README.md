@@ -25,6 +25,7 @@ npm run dev
 ## 主要能力
 
 - Worker 内统一鉴权：管理员 HttpOnly Session、每个普通 Agent 的独立 Bearer Key，以及可跨 Agent 管理消息的总管 Agent。
+- 通行密钥登录：支持 Windows Hello、Android 等 WebAuthn 凭据管理器；在“登录与安全”绑定，退出后仍可使用。管理员密钥作为备用入口，在线修改它会同时撤销所有通行密钥绑定。详见[使用与实现说明](docs/releases/2026-09-18-passkeys.md)。
 - Agent 生命周期和密钥管理：创建、轮换、撤销、停用、移除、恢复及分步清理；明文密钥只显示一次。
 - 条目与版本：分页筛选、完整历史、基于 `base_version` 的并发更新、已读、归档和手动完成状态。
 - 三种 Agent 页面：按日期的信息流、稳定清单和主报告；每个 Agent 独立选择布局。

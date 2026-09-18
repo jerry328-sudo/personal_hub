@@ -31,6 +31,7 @@ export type AdminSessionInsert = {
   createdAt: string;
   expiresAt: string;
   credentialRevision?: number;
+  passkeyId?: string;
 };
 
 export type AdminSessionRecord = AdminSessionInsert & {
@@ -300,13 +301,15 @@ export async function touchKeyUsage(
 export async function insertSession(db: D1Database, record: AdminSessionInsert): Promise<void> {
   const inserted = await db
     .prepare(
-      `INSERT INTO admin_sessions (id, token_hash, created_at, expires_at, credential_revision)
-       SELECT ?, ?, ?, ?, ?
+      `INSERT INTO admin_sessions (id, token_hash, created_at, expires_at, credential_revision, passkey_id)
+       SELECT ?, ?, ?, ?, ?, ?
        WHERE EXISTS (SELECT 1 FROM admin_credentials WHERE id = 1 AND revision = ?)
+       AND (? IS NULL OR EXISTS (SELECT 1 FROM admin_passkeys WHERE id = ? AND revoked_at IS NULL))
        RETURNING id`,
     )
     .bind(record.id, record.tokenHash, record.createdAt, record.expiresAt,
-      record.credentialRevision ?? 0, record.credentialRevision ?? 0)
+      record.credentialRevision ?? 0, record.passkeyId ?? null, record.credentialRevision ?? 0,
+      record.passkeyId ?? null, record.passkeyId ?? null)
     .first<IdRow>();
   if (!inserted) throw conflict("登录密钥已变更，请使用新密钥重新登录");
 }
@@ -320,6 +323,7 @@ export async function findSession(
       `SELECT id, token_hash, created_at, expires_at, revoked_at
        FROM admin_sessions
        WHERE id = ? AND credential_revision = (SELECT revision FROM admin_credentials WHERE id = 1)
+       AND (passkey_id IS NULL OR EXISTS (SELECT 1 FROM admin_passkeys p WHERE p.id = admin_sessions.passkey_id AND p.revoked_at IS NULL))
        LIMIT 1`,
     )
     .bind(sessionId)
@@ -375,9 +379,14 @@ export async function rotateAdminCredential(
       WHERE id = 1 AND revision = ? AND EXISTS (
         SELECT 1 FROM admin_sessions WHERE id = ? AND revoked_at IS NULL
         AND expires_at > ? AND credential_revision = ?
+        AND (passkey_id IS NULL OR EXISTS (SELECT 1 FROM admin_passkeys p WHERE p.id = admin_sessions.passkey_id AND p.revoked_at IS NULL))
       ) RETURNING revision`).bind(digest, now, revision, sessionId, now, revision),
     db.prepare(`UPDATE admin_sessions SET revoked_at = COALESCE(revoked_at, ?)
       WHERE credential_revision < (SELECT revision FROM admin_credentials WHERE id = 1)`).bind(now),
+    db.prepare(`UPDATE admin_passkeys SET revoked_at = COALESCE(revoked_at, ?)
+      WHERE credential_revision < (SELECT revision FROM admin_credentials WHERE id = 1)`).bind(now),
+    db.prepare(`DELETE FROM webauthn_challenges
+      WHERE credential_revision < (SELECT revision FROM admin_credentials WHERE id = 1)`),
   ]);
   return results[0]?.results.length === 1;
 }

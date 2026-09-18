@@ -2,6 +2,7 @@ import { Hono, type MiddlewareHandler } from "hono";
 import type { AppEnv } from "./env";
 import { requireIdentity } from "./modules/auth/middleware";
 import { registerAuthRoutes } from "./modules/auth/routes";
+import { registerPasskeyRoutes } from "./modules/auth/passkeys";
 import { registerTaskRoutes } from "./modules/tasks/routes";
 import { registerEntryRoutes } from "./modules/entries/routes";
 import { registerAttachmentRoutes } from "./modules/attachments/routes";
@@ -26,7 +27,7 @@ app.use("/api/*", privateApiHeaders);
 app.use("/api", requireIdentity());
 app.use("/api/*", async (c, next) => {
   const path = new URL(c.req.url).pathname;
-  if (c.req.method === "POST" && path === "/api/v1/auth/login") {
+  if (c.req.method === "POST" && ["/api/v1/auth/login", "/api/v1/auth/passkeys/login/options", "/api/v1/auth/passkeys/login/verify"].includes(path)) {
     await next();
     return;
   }
@@ -34,6 +35,7 @@ app.use("/api/*", async (c, next) => {
 });
 
 registerAuthRoutes(app);
+registerPasskeyRoutes(app);
 registerDiscoveryRoutes(app);
 registerAgentRoutes(app, { purgeAttachmentsStep: purgeAgentAttachmentsStep });
 registerEntryRoutes(app);

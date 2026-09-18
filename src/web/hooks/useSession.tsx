@@ -1,12 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { SessionDto } from "../../shared/contracts";
 import { ApiError, sessionApi } from "../api";
+import { passkeysApi } from "../passkeys";
 
 interface SessionContextValue {
   session: SessionDto | null;
   loading: boolean;
   error: string | null;
   login: (secret: string) => Promise<void>;
+  loginWithPasskey: () => Promise<void>;
   logout: () => Promise<void>;
   changeSecret: (currentSecret: string, newSecret: string) => Promise<void>;
 }
@@ -54,12 +56,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const loginWithPasskey = useCallback(async () => {
+    setError(null);
+    setSession(await passkeysApi.login());
+  }, []);
+
   const changeSecret = useCallback(async (currentSecret: string, newSecret: string) => {
     await sessionApi.changeSecret(currentSecret, newSecret);
     setSession(null);
   }, []);
 
-  const value = useMemo(() => ({ session, loading, error, login, logout, changeSecret }), [session, loading, error, login, logout, changeSecret]);
+  const value = useMemo(() => ({ session, loading, error, login, loginWithPasskey, logout, changeSecret }), [session, loading, error, login, loginWithPasskey, logout, changeSecret]);
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
 

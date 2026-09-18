@@ -9,6 +9,7 @@ import type {
 } from "../../../shared/contracts";
 import type { ReadScope } from "../../shared/authorize";
 import { boolFromDb } from "../../shared/db";
+import { visibleTaskClause } from "../tasks/repository";
 
 export type EntryListOrder = "id_asc" | "updated_desc" | "created_asc";
 export type EntryListView = "brief" | "full";
@@ -216,7 +217,7 @@ export async function entryCounts(db: D1Database) {
     COALESCE(SUM(CASE WHEN e.archived = 0 AND e.read_version < v.version THEN 1 ELSE 0 END), 0) AS unread,
     COALESCE(SUM(CASE WHEN e.archived = 0 AND v.important = 1 AND e.read_version < v.version THEN 1 ELSE 0 END), 0) AS important_unread,
     COALESCE(SUM(e.archived), 0) AS archived,
-    (SELECT COUNT(*) FROM tasks WHERE done = 0) AS open_tasks
+    (SELECT COUNT(*) FROM tasks WHERE done = 0 AND ${visibleTaskClause}) AS open_tasks
     FROM entries e JOIN entry_versions v ON v.entry_id = e.id
       AND v.version = (SELECT MAX(version) FROM entry_versions WHERE entry_id = e.id)
   `).first<{ unread: number; important_unread: number; archived: number; open_tasks: number }>();

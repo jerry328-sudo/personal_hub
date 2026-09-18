@@ -14,6 +14,7 @@ export type TaskRow = {
 export type TaskListScope = {
   agentId?: string;
   done?: boolean;
+  excludeArchivedEntries?: boolean;
   afterId?: string;
   limit: number;
 };
@@ -61,9 +62,12 @@ export function taskDto(row: TaskRow): TaskDto {
   };
 }
 
+export const visibleTaskClause = "NOT EXISTS (SELECT 1 FROM entries source_entry WHERE source_entry.id = tasks.entry_id AND source_entry.archived = 1)";
+
 export async function listTasks(db: D1Database, scope: TaskListScope): Promise<TaskRow[]> {
   const where: string[] = [];
   const bindings: unknown[] = [];
+  if (scope.excludeArchivedEntries) where.push(visibleTaskClause);
 
   if (scope.agentId !== undefined) {
     where.push("agent_id = ?");

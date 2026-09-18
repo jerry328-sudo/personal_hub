@@ -2,7 +2,7 @@ import { ExternalLink, Menu, Plus, Search, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type { TaskDto } from "../../shared/contracts";
-import { notifyDataChanged, tasksApi } from "../api";
+import { notifyDataChanged, subscribeDataChanged, tasksApi } from "../api";
 import { useAppShell } from "../components/AppShell";
 import { TaskForm } from "../components/TaskForm";
 import { ConfirmDialog, EmptyState, ErrorState, LoadingState, useToast } from "../components/ui";
@@ -34,6 +34,7 @@ export function TasksPage() {
       .finally(() => setLoading(false));
   }, [agentId, filter]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => subscribeDataChanged(load), [load]);
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);

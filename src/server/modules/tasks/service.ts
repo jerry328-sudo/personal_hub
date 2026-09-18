@@ -54,11 +54,13 @@ export async function listTasks(ctx: ServiceContext, query: TaskQuery): Promise<
   const agentId = effectiveOwnerForRead(ctx, query.agent_id);
   const done = query.done === "yes" ? true : query.done === "no" ? false : undefined;
   const limit = query.limit ?? LIMITS.defaultPageSize;
-  const fingerprint = queryFingerprint({ agentId, done: query.done ?? "all", order: "id_asc" });
+  const excludeArchivedEntries = ctx.actor.type === "admin";
+  const fingerprint = queryFingerprint({ agentId, done: query.done ?? "all", excludeArchivedEntries, order: "id_asc" });
   const cursor = decodeCursor(query.cursor, fingerprint);
   if (cursor !== null && cursor.length !== 1) throw badRequest("分页游标无效");
 
   const rows = await listTaskRecords(ctx.env.DB, {
+    excludeArchivedEntries,
     ...(agentId === undefined ? {} : { agentId }),
     ...(done === undefined ? {} : { done }),
     ...(cursor?.[0] === undefined ? {} : { afterId: cursor[0] }),

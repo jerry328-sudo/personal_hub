@@ -127,6 +127,36 @@ async function uploadAttachment(token: string, filename: string): Promise<Attach
 }
 
 describe("Personal Hub Worker API", () => {
+  it("hides archived-source tasks from every admin filter and counts, restoring them on unarchive", async () => {
+    const cookie = await loginAdmin("archived-tasks");
+    const owner = await createAgent(cookie, "archived-task-owner");
+    const entry = await createEntry(owner.key.secret, "archive task source");
+    const headers = { Cookie: cookie, Origin: APP_ORIGIN };
+    const bearer = { Authorization: `Bearer ${owner.key.secret}` };
+    const makeTask = async (title: string, entry_id?: string) => readJson<TaskDto>(await api("/api/v1/agent/tasks", jsonBody("POST", { title, entry_id }, bearer)));
+    const linked = await makeTask("linked open", entry.id);
+    const completed = await makeTask("linked done", entry.id);
+    const standalone = await makeTask("standalone");
+    await api(`/api/v1/agent/tasks/${completed.id}`, jsonBody("PATCH", { done: true }, bearer));
+    const before = await readJson<{ open_tasks: number }>(await api("/api/v1/admin/entries/counts", { headers }));
+    await api(`/api/v1/admin/entries/${entry.id}/state`, jsonBody("PATCH", { archived: true }, headers));
+    for (const done of ["all", "no", "yes"]) {
+      const response = await api(`/api/v1/admin/tasks?agent_id=${owner.agent.id}&done=${done}&limit=1`, { headers });
+      expect(response.status).toBe(200);
+      const page = await readJson<Page<TaskDto>>(response);
+      expect(page.items.map((task) => task.id)).toEqual(done === "yes" ? [] : [standalone.id]);
+      expect(page.next_cursor).toBeNull();
+    }
+    const after = await readJson<{ open_tasks: number }>(await api("/api/v1/admin/entries/counts", { headers }));
+    expect(after.open_tasks).toBe(before.open_tasks - 1);
+    const agentTasks = await readJson<Page<TaskDto>>(await api("/api/v1/agent/tasks?done=all", { headers: bearer }));
+    expect(agentTasks.items.map((task) => task.id).sort()).toEqual([linked.id, completed.id, standalone.id].sort());
+    await api(`/api/v1/admin/entries/${entry.id}/state`, jsonBody("PATCH", { archived: false }, headers));
+    const restored = await readJson<Page<TaskDto>>(await api(`/api/v1/admin/tasks?agent_id=${owner.agent.id}&done=no`, { headers }));
+    expect(restored.items.map((task) => task.id).sort()).toEqual([linked.id, standalone.id].sort());
+    expect((await readJson<{ open_tasks: number }>(await api("/api/v1/admin/entries/counts", { headers }))).open_tasks).toBe(before.open_tasks);
+  });
+
   it("filters archive time server-side with exclusive end, owner scope and bound cursors", async () => {
     const cookie = await loginAdmin("archive-window");
     const own = await createAgent(cookie, "archive-window-owner");

@@ -190,7 +190,8 @@ input[type="checkbox"] { width: 16px; height: 16px; flex: none; accent-color: va
 .compact-tabs { margin: 0; }
 .compact-tabs .tab { padding: 9px 7px; }
 .task-link { white-space: nowrap; }
-.board-search { width: 320px; margin: 20px 0 4px; }
+.board-search-row { padding: 20px 0 4px; }
+.board-search { width: min(320px, 100%); margin: 0; }
 .check-entry { border-bottom: 1px solid var(--line); }
 .check-line { min-height: 76px; display: flex; align-items: center; gap: 13px; }
 .completion-check { min-width: 40px; min-height: 44px; display: grid; place-items: center; cursor: pointer; }

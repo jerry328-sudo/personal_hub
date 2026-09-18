@@ -104,7 +104,9 @@ export function AgentPage() {
         <CompletionTabs value={completion} onChange={setCompletion} />
         <Link className="text-action task-link" to={`/tasks?agent=${encodeURIComponent(agent.id)}`}><ListTodo aria-hidden="true" />查看关联待办</Link>
       </div>
-      <label className="search-field board-search"><Search aria-hidden="true" /><span className="sr-only">搜索当前 Agent</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索当前 Agent 的内容" /></label>
+      <div className="board-search-row">
+        <label className="search-field board-search"><Search aria-hidden="true" /><span className="sr-only">搜索当前 Agent</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索当前 Agent 的内容" /></label>
+      </div>
       {result.loading ? <LoadingState /> : result.error ? <ErrorState message={result.error} onRetry={result.refresh} /> : <>
         {mode === "list" ? (
           <ListView entries={result.items} agents={agents} onChanged={result.refresh} />

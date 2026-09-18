@@ -1,0 +1,53 @@
+{
+  "name": "personal-hub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^22.13.0 || >=24.0.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "node scripts/deploy.mjs",
+    "deploy:staging": "node scripts/deploy.mjs staging",
+    "deploy:production": "node scripts/deploy.mjs production",
+    "types": "wrangler types --env-interface CloudflareBindings",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests scripts vite.config.ts vitest.config.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:migrate:local": "wrangler d1 migrations apply personal-hub-local --local",
+    "db:migrate:staging": "node scripts/migrate.mjs staging",
+    "db:migrate:production": "node scripts/migrate.mjs production"
+  },
+  "dependencies": {
+    "hono": "^4.13.8",
+    "lucide-react": "^1.47.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-markdown": "^10.1.0",
+    "react-router-dom": "^7.18.4",
+    "remark-gfm": "^4.0.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.55.0",
+    "@cloudflare/vitest-plugin": "^1.1.12",
+    "@cloudflare/workers-types": "^5.20260918.1",
+    "@eslint/js": "^9.36.0",
+    "@types/node": "^26.6.1",
+    "@types/react": "^19.1.16",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^6.1.1",
+    "eslint": "^10.10.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "jsonc-parser": "^3.3.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.0",
+    "vite": "^8.3.0",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.134.0"
+  }
+}

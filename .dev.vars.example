@@ -1,0 +1,2 @@
+ADMIN_LOGIN_SECRET=replace-with-a-long-random-secret
+AUTH_PEPPER=replace-with-a-different-long-random-secret

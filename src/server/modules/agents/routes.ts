@@ -1,13 +1,19 @@
 import type { Hono } from "hono";
 import { z } from "zod";
 import { LIMITS } from "../../../shared/limits";
-import { createAgentSchema, reportSchema, updateAgentSchema } from "../../../shared/validation";
+import {
+  createAgentSchema,
+  reportSchema,
+  updateAgentSchema,
+  updateReadAccessSchema,
+} from "../../../shared/validation";
 import type { AppEnv } from "../../env";
 import { serviceContext } from "../../env";
 import { badRequest } from "../../shared/errors";
 import { readLimitedJson, requireSameOrigin } from "../../shared/http";
-import { requireAdminSession, requireAgentKey } from "../auth/middleware";
+import { requireAdminSession, requireAgentRole } from "../auth/middleware";
 import { purgeAgentStep, type AgentPurgeDependencies } from "./lifecycle";
+import { getReaderAccess, replaceReaderAccess } from "./read-access";
 import {
   createAgent,
   disableAgent,
@@ -48,8 +54,8 @@ export type AgentRouteDependencies = AgentPurgeDependencies;
 
 export function registerAgentRoutes(app: Hono<AppEnv>, dependencies: AgentRouteDependencies): void {
   const adminOnly = requireAdminSession();
-  const ownAgentOnly = requireAgentKey("own");
-  const managerOnly = requireAgentKey("all");
+  const ownAgentOnly = requireAgentRole(["agent"]);
+  const managerOnly = requireAgentRole(["manager"]);
 
   app.get("/api/v1/admin/agents", adminOnly, async (c) => {
     const query = parseAgentListQuery(c.req.query());
@@ -92,6 +98,16 @@ export function registerAgentRoutes(app: Hono<AppEnv>, dependencies: AgentRouteD
     requireAdminWriteOrigin(c.req.raw, c.env);
     const progress = await purgeAgentStep(serviceContext(c), c.req.param("id"), dependencies);
     return c.json(progress, progress.status === "pending" ? 202 : 200);
+  });
+
+  app.get("/api/v1/admin/agents/:id/read-access", adminOnly, async (c) => {
+    return c.json(await getReaderAccess(serviceContext(c), c.req.param("id")));
+  });
+
+  app.put("/api/v1/admin/agents/:id/read-access", adminOnly, async (c) => {
+    requireAdminWriteOrigin(c.req.raw, c.env);
+    const input = await parseJson(c.req.raw, updateReadAccessSchema);
+    return c.json(await replaceReaderAccess(serviceContext(c), c.req.param("id"), input));
   });
 
   app.get("/api/v1/agent", ownAgentOnly, async (c) => {

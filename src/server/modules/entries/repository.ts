@@ -9,6 +9,7 @@ import type {
 } from "../../../shared/contracts";
 import type { ReadScope } from "../../shared/authorize";
 import { boolFromDb } from "../../shared/db";
+import { appendReadAccessPredicate } from "../../shared/read-access";
 import { visibleTaskClause } from "../tasks/repository";
 
 export type EntryListOrder = "id_asc" | "updated_desc" | "created_asc";
@@ -108,12 +109,20 @@ type StateRow = {
 };
 
 function addScopeWhere(scope: ReadScope, where: string[], bindings: unknown[]): void {
-  if (scope.kind === "own") {
+  if (scope.kind === "reader") {
+    // 只读身份：显式来源过滤，外加实时授权条件（身份仍启用、权限版本一致、
+    // owner 是可读写的普通分区，且属于 all 模式或存在授权关系）。
+    if (scope.agentId) {
+      where.push("e.agent_id = ?");
+      bindings.push(scope.agentId);
+    }
+    appendReadAccessPredicate("e.agent_id", scope.reader, where, bindings);
+    return;
+  }
+  const agentId = scope.agentId;
+  if (agentId) {
     where.push("e.agent_id = ?");
-    bindings.push(scope.agentId);
-  } else if (scope.agentId) {
-    where.push("e.agent_id = ?");
-    bindings.push(scope.agentId);
+    bindings.push(agentId);
   }
 }
 

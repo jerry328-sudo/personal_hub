@@ -445,7 +445,7 @@ describe("attachment and private media integration", () => {
         type: "agent",
         agentId: owner.agent.id,
         keyId: "test-key",
-        scope: "own",
+        role: "agent",
         status: "active",
       },
       requestId: "compensation-test",

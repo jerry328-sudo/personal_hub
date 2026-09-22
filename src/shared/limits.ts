@@ -12,6 +12,7 @@ export const LIMITS = {
   reportNoteCharacters: 2_000,
   taskTitleCharacters: 200,
   maxActiveKeys: 2,
+  maxReadTargets: 500,
 } as const;
 
 export function utf8Size(value: string): number {

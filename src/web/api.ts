@@ -17,9 +17,11 @@ import type {
   PatchEntryStateInput,
   PatchTaskInput,
   PurgeProgressDto,
+  ReadAccessDto,
   SessionDto,
   TaskDto,
   UpdateAgentInput,
+  UpdateReadAccessInput,
 } from "../shared/contracts";
 
 export class ApiError extends Error {
@@ -157,6 +159,16 @@ export const agentsApi = {
   remove: (id: string) => requestJson<AgentDto>(`/api/v1/admin/agents/${encodeURIComponent(id)}/remove`, { method: "POST" }),
   restore: (id: string) => requestJson<AgentDto>(`/api/v1/admin/agents/${encodeURIComponent(id)}/restore`, { method: "POST" }),
   purgeStep: (id: string) => requestJson<PurgeProgressDto>(`/api/v1/admin/agents/${encodeURIComponent(id)}`, { method: "DELETE" }),
+};
+
+export const readAccessApi = {
+  get: (agentId: string, signal?: AbortSignal) =>
+    requestJson<ReadAccessDto>(`/api/v1/admin/agents/${encodeURIComponent(agentId)}/read-access`, { signal }),
+  replace: (agentId: string, input: UpdateReadAccessInput) =>
+    requestJson<ReadAccessDto>(`/api/v1/admin/agents/${encodeURIComponent(agentId)}/read-access`, {
+      method: "PUT",
+      body: jsonBody(input),
+    }),
 };
 
 export const keysApi = {

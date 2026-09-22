@@ -94,7 +94,7 @@ export function TasksPage() {
         <label className="search-field"><Search aria-hidden="true" /><span className="sr-only">搜索待办</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索待办" /></label>
         <label className="agent-filter">Agent
           <select value={agentId} onChange={(event) => { const next = new URLSearchParams(params); if (event.target.value) next.set("agent", event.target.value); else next.delete("agent"); setParams(next); }}>
-            <option value="">全部</option><option value="manual">手动待办</option>{agents.filter((agent) => agent.id !== "manual" && agent.scope === "own").map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+            <option value="">全部</option><option value="manual">手动待办</option>{agents.filter((agent) => agent.id !== "manual" && agent.role === "agent").map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
           </select>
         </label>
       </div>

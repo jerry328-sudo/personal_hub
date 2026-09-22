@@ -81,7 +81,7 @@ export function InboxPage({ kind }: { kind: InboxKind }) {
           <p className="subtitle">{copy.subtitle}</p>
           <label className="search-field"><Search aria-hidden="true" /><span className="sr-only">搜索</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索标题或内容" /></label>
           <div className="archive-filters">
-            <label>来源<select aria-label="按 Agent 筛选" value={agentId} onChange={(event) => setAgentId(event.target.value)}><option value="">全部 Agent</option>{agents.filter((agent) => agent.scope === "own").map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
+            <label>来源<select aria-label="按 Agent 筛选" value={agentId} onChange={(event) => setAgentId(event.target.value)}><option value="">全部 Agent</option>{agents.filter((agent) => agent.role === "agent").map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
             {kind === "archive" ? <>
               <label>归档起始<input type="date" value={startDate} max={endDate || undefined} onChange={(event) => setStartDate(event.target.value)} /></label>
               <label>归档截止<input type="date" value={endDate} min={startDate || undefined} onChange={(event) => setEndDate(event.target.value)} /></label>

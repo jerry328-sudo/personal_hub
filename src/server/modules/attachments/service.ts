@@ -1,6 +1,12 @@
 import type { AttachmentDto, PurgeProgressDto } from "../../../shared/contracts";
 import { attachmentIdFromUrl } from "../../../shared/markdown";
 import type { Actor, ServiceContext } from "../../env";
+import {
+  requireManagerActor,
+  requireOwnAgentActor,
+  resolveReaderReadScope,
+  type ReadScope,
+} from "../../shared/authorize";
 import { badRequest, conflict, forbidden, notFound } from "../../shared/errors";
 import { applyPrivateHeaders } from "../../shared/http";
 import { newEntityId, nowIso } from "../../shared/ids";
@@ -12,6 +18,7 @@ import {
   countAgentAttachmentUploadLeases,
   findActiveUploadLeaseObjectKeys,
   findAttachment,
+  findAttachmentForScope,
   findAttachmentOwnerTarget,
   findAttachmentsByIds,
   listExpiredAttachmentUploadLeases,
@@ -51,11 +58,27 @@ function assertActiveAgentActor(actor: Actor): void {
   }
 }
 
-function assertOwnerAccess(actor: Actor, ownerId: string): void {
+/**
+ * 写入专用检查。读取和写入刻意不再共享同一函数，避免“有读权限就能上传”。
+ * 只读身份在这里默认被拒绝。
+ */
+function assertWriteOwnerAccess(actor: Actor, ownerId: string): void {
   assertActiveAgentActor(actor);
-  if (actor.type === "agent" && actor.scope === "own" && actor.agentId !== ownerId) {
-    throw forbidden();
+  if (actor.type !== "agent") return;
+  if (actor.role === "reader") throw forbidden("只读身份不能写入业务数据");
+  if (actor.role === "agent" && actor.agentId !== ownerId) throw forbidden();
+}
+
+/** 图片读取范围。附件元数据与 R2 对象使用同一个范围。 */
+function mediaReadScope(actor: Actor): ReadScope {
+  if (actor.type === "admin") return { kind: "all" };
+  if (actor.role === "reader") return resolveReaderReadScope(actor);
+  if (actor.role === "agent") {
+    requireOwnAgentActor(actor);
+    return { kind: "own", agentId: actor.agentId };
   }
+  requireManagerActor(actor);
+  return { kind: "all" };
 }
 
 function createdBy(actor: Actor): string {
@@ -66,7 +89,7 @@ async function requireActiveUploadTarget(
   ctx: ServiceContext,
   ownerId: string,
 ): Promise<void> {
-  assertOwnerAccess(ctx.actor, ownerId);
+  assertWriteOwnerAccess(ctx.actor, ownerId);
   const target = await findAttachmentOwnerTarget(ctx.env.DB, ownerId);
   if (target === null) throw notFound("目标 Agent 不存在");
   if (target.scope !== "own") throw forbidden("附件只能归属普通 Agent");
@@ -177,16 +200,9 @@ export async function uploadAttachment(
 }
 
 export async function getAttachmentMedia(ctx: ServiceContext, id: string): Promise<Response> {
-  const attachment = await findAttachment(ctx.env.DB, id);
+  // 元数据与对象字节使用同一授权条件；越权和不存在返回相同的 404。
+  const attachment = await findAttachmentForScope(ctx.env.DB, id, mediaReadScope(ctx.actor));
   if (!attachment) throw notFound("图片不存在");
-  if (
-    ctx.actor.type === "agent"
-    && ctx.actor.scope === "own"
-    && ctx.actor.agentId !== attachment.agent_id
-  ) {
-    throw notFound("图片不存在");
-  }
-  assertOwnerAccess(ctx.actor, attachment.agent_id);
 
   const object = await getImage(ctx.env.MEDIA, attachment.object_key);
   if (!object) {
@@ -212,7 +228,7 @@ export async function validateEntryAttachments(
   ownerId: string,
   markdown: string,
 ): Promise<void> {
-  assertOwnerAccess(ctx.actor, ownerId);
+  assertWriteOwnerAccess(ctx.actor, ownerId);
   const imageUrls = extractMarkdownImageUrls(markdown);
   if (imageUrls.length > MAX_ENTRY_IMAGE_REFERENCES) {
     throw badRequest(`单篇正文最多引用 ${MAX_ENTRY_IMAGE_REFERENCES} 张图片`);

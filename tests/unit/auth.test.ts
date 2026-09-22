@@ -57,7 +57,7 @@ describe("Bearer authentication scheme", () => {
       type: "agent",
       agentId,
       keyId: id,
-      scope: "own",
+      role: "agent",
       status: "active",
     });
     const stored = await cloudflareEnv.DB.prepare(

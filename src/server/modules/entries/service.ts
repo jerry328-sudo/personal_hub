@@ -15,16 +15,24 @@ import type { Actor, ServiceContext } from "../../env";
 import {
   assertCanWriteOwner,
   createdByActor,
+  readerScopeOf,
   requireAdminActor,
   requireManagerActor,
   requireOwnAgentActor,
+  requireReaderActor,
   resolveReadScope,
 } from "../../shared/authorize";
 import { isUniqueConstraintError } from "../../shared/db";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../../shared/errors";
 import { newEntityId, nowIso } from "../../shared/ids";
-import { decodeCursor, encodeCursor, queryFingerprint } from "../../shared/pagination";
+import {
+  cursorScopeFor,
+  decodeCursor,
+  encodeCursor,
+  queryFingerprint,
+} from "../../shared/pagination";
 import { validateEntryAttachments } from "../attachments/service";
+import { findReadableSource } from "../readers/repository";
 import {
   createEntryBatch,
   deleteEntryBatch,
@@ -49,7 +57,7 @@ import {
   type OwnerWriteInfo,
 } from "./repository";
 
-export type EntryAudience = "agent" | "manager" | "admin";
+export type EntryAudience = "agent" | "manager" | "admin" | "reader";
 
 export interface EntryMutationResult {
   id: string;
@@ -64,13 +72,15 @@ export interface VersionPageQuery {
 function assertAudience(actor: Actor, audience: EntryAudience): void {
   if (audience === "agent") requireOwnAgentActor(actor);
   else if (audience === "manager") requireManagerActor(actor);
+  else if (audience === "reader") requireReaderActor(actor);
   else requireAdminActor(actor);
 }
 
 function assertActiveEntryReader(actor: Actor): void {
   if (actor.type === "admin") return;
-  if (actor.scope === "own") requireOwnAgentActor(actor);
-  else requireManagerActor(actor);
+  if (actor.role === "agent") requireOwnAgentActor(actor);
+  else if (actor.role === "manager") requireManagerActor(actor);
+  else requireReaderActor(actor);
 }
 
 function ensureWritableOwner(owner: OwnerWriteInfo | null): asserts owner is OwnerWriteInfo {
@@ -116,7 +126,7 @@ function normalizeEntryQuery(
   const fingerprint = queryFingerprint({
     resource: "entries",
     scope: scope.kind,
-    owner: scope.kind === "own" ? scope.agentId : scope.agentId ?? null,
+    owner: scope.agentId ?? null,
     view,
     order,
     completion,
@@ -125,7 +135,7 @@ function normalizeEntryQuery(
     query: search ?? null,
     read, time_field, start: start ?? null, end: end ?? null,
   });
-  const cursor = decodeCursor(raw.cursor, fingerprint);
+  const cursor = decodeCursor(raw.cursor, fingerprint, cursorScopeFor(actor));
   const expectedCursorLength = order === "id_asc" ? 1 : 2;
   if (cursor && cursor.length !== expectedCursorLength) throw badRequest("分页游标格式无效");
 
@@ -171,12 +181,27 @@ function readScopeFor(ctx: ServiceContext) {
   return resolveReadScope(ctx.actor);
 }
 
+/**
+ * 只读身份显式指定来源时必须落在授权范围内。越权与不存在返回同样的 404，
+ * 不通过错误消息泄露标题或名称。
+ */
+async function assertRequestedSourceReadable(
+  ctx: ServiceContext,
+  audience: EntryAudience,
+  requestedAgentId: string | undefined,
+): Promise<void> {
+  if (audience !== "reader" || requestedAgentId === undefined) return;
+  const readable = await findReadableSource(ctx.env.DB, readerScopeOf(ctx.actor), requestedAgentId);
+  if (!readable) throw notFound("来源不存在");
+}
+
 export async function listEntries(
   ctx: ServiceContext,
   rawQuery: EntryQuery,
   audience: EntryAudience,
 ): Promise<Page<EntryBriefDto | EntryFullDto>> {
   assertAudience(ctx.actor, audience);
+  await assertRequestedSourceReadable(ctx, audience, rawQuery.agent_id);
   const normalized = normalizeEntryQuery(ctx.actor, rawQuery, audience);
   const scope = resolveReadScope(ctx.actor, rawQuery.agent_id);
   const result = await listCurrentEntries(ctx.env.DB, scope, normalized.query);
@@ -186,7 +211,7 @@ export async function listEntries(
   return {
     items: fitted.items,
     next_cursor: hasMore && last
-      ? encodeCursor(entryCursor(last, normalized.query.order), normalized.fingerprint)
+      ? encodeCursor(entryCursor(last, normalized.query.order), normalized.fingerprint, cursorScopeFor(ctx.actor))
       : null,
   };
 }
@@ -293,7 +318,7 @@ export async function listEntryVersions(
   }
   const fingerprint = queryFingerprint({ resource: "entry_versions", entry_id: entryId, order: "version_desc" });
   if (page.cursor && page.cursor.length > 2_048) throw badRequest("分页游标过长");
-  const decoded = decodeCursor(page.cursor, fingerprint);
+  const decoded = decodeCursor(page.cursor, fingerprint, cursorScopeFor(ctx.actor));
   if (decoded && decoded.length !== 1) throw badRequest("分页游标格式无效");
   const beforeVersion = decoded ? Number(decoded[0]) : null;
   if (beforeVersion !== null && (!Number.isSafeInteger(beforeVersion) || beforeVersion < 1)) {
@@ -303,7 +328,9 @@ export async function listEntryVersions(
   const last = result.items.at(-1);
   return {
     items: result.items,
-    next_cursor: result.hasMore && last ? encodeCursor([String(last.version)], fingerprint) : null,
+    next_cursor: result.hasMore && last
+      ? encodeCursor([String(last.version)], fingerprint, cursorScopeFor(ctx.actor))
+      : null,
   };
 }
 

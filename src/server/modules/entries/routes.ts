@@ -12,7 +12,7 @@ import {
   type EntryQuery,
 } from "../../../shared/validation";
 import { serviceContext, type AppEnv } from "../../env";
-import { requireAdminActor, requireManagerActor, requireOwnAgentActor } from "../../shared/authorize";
+import { requireAdminActor, requireManagerActor, requireOwnAgentActor, requireReaderActor } from "../../shared/authorize";
 import { badRequest } from "../../shared/errors";
 import { readLimitedJson, requireSameOrigin } from "../../shared/http";
 import {
@@ -71,6 +71,7 @@ function assertAudience(c: Context<AppEnv>, audience: EntryAudience): void {
   const actor = c.get("actor");
   if (audience === "agent") requireOwnAgentActor(actor);
   else if (audience === "manager") requireManagerActor(actor);
+  else if (audience === "reader") requireReaderActor(actor);
   else requireAdminActor(actor);
 }
 
@@ -79,7 +80,8 @@ function privateResponse(c: Context<AppEnv>): void {
   c.header("X-Content-Type-Options", "nosniff");
 }
 
-function listHandler(audience: EntryAudience): Handler<AppEnv> {
+// readers 模块复用同一批 handler，只是换一个 audience。
+export function listHandler(audience: EntryAudience): Handler<AppEnv> {
   return async (c) => {
     privateResponse(c);
     assertAudience(c, audience);
@@ -88,7 +90,7 @@ function listHandler(audience: EntryAudience): Handler<AppEnv> {
   };
 }
 
-function detailHandler(audience: EntryAudience): Handler<AppEnv> {
+export function detailHandler(audience: EntryAudience): Handler<AppEnv> {
   return async (c) => {
     privateResponse(c);
     assertAudience(c, audience);
@@ -111,7 +113,7 @@ function appendHandler(audience: EntryAudience): Handler<AppEnv> {
   };
 }
 
-function versionsHandler(audience: EntryAudience): Handler<AppEnv> {
+export function versionsHandler(audience: EntryAudience): Handler<AppEnv> {
   return async (c) => {
     privateResponse(c);
     assertAudience(c, audience);
@@ -124,7 +126,7 @@ function versionsHandler(audience: EntryAudience): Handler<AppEnv> {
   };
 }
 
-function versionDetailHandler(audience: EntryAudience): Handler<AppEnv> {
+export function versionDetailHandler(audience: EntryAudience): Handler<AppEnv> {
   return async (c) => {
     privateResponse(c);
     assertAudience(c, audience);

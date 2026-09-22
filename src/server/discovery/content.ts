@@ -1,6 +1,6 @@
 import type { Actor } from "../env";
 
-export type DiscoveryRole = "agent" | "manager" | "admin";
+export type DiscoveryRole = "agent" | "manager" | "admin" | "reader";
 
 export type RouteSummary = {
   method: string;
@@ -23,6 +23,17 @@ export type QuickStartDocument = {
   };
   full_documentation: "/api/docs";
 };
+
+const READER_ROUTES: RouteSummary[] = [
+  { method: "GET", path: "/api/v1/reader", purpose: "读取自身配置、读取模式与权限版本" },
+  { method: "GET", path: "/api/v1/reader/agents", purpose: "分页列出可访问的内容来源" },
+  { method: "GET", path: "/api/v1/reader/entries", purpose: "读取授权范围内的条目" },
+  { method: "GET", path: "/api/v1/reader/entries/{id}", purpose: "读取授权条目的正文" },
+  { method: "GET", path: "/api/v1/reader/entries/{id}/versions", purpose: "读取历史版本目录" },
+  { method: "GET", path: "/api/v1/reader/entries/{id}/versions/{version}", purpose: "读取指定历史版本正文" },
+  { method: "GET", path: "/api/v1/reader/tasks", purpose: "读取授权范围内的待办" },
+  { method: "GET", path: "/api/v1/media/{attachment_id}", purpose: "读取授权范围内的私有图片" },
+];
 
 const AGENT_ROUTES: RouteSummary[] = [
   { method: "GET", path: "/api/v1/agent", purpose: "读取自身配置和最近上报状态" },
@@ -84,36 +95,50 @@ const ADMIN_ROUTES: RouteSummary[] = [
 
 function discoveryRole(actor: Actor): DiscoveryRole {
   if (actor.type === "admin") return "admin";
-  return actor.scope === "all" ? "manager" : "agent";
+  return actor.role;
 }
 
 function routesFor(role: DiscoveryRole): RouteSummary[] {
   if (role === "admin") return ADMIN_ROUTES;
-  return role === "manager" ? MANAGER_ROUTES : AGENT_ROUTES;
+  if (role === "manager") return MANAGER_ROUTES;
+  return role === "reader" ? READER_ROUTES : AGENT_ROUTES;
 }
 
 function authenticationFor(role: DiscoveryRole): string {
   return role === "admin"
     ? "管理员 Session Cookie；写操作还必须来自配置的同源页面"
-    : "Authorization: Bearer <该 Agent 的独立密钥>";
+    : "Authorization: Bearer <该身份的独立密钥>";
 }
+
+// 只读身份不允许写回或上报，所以工作约定与写入身份分开。
+const READER_WORKFLOW: string[] = [
+  "先用 /api/v1/reader/agents 读取授权来源，确认可访问的 agent_id。",
+  "按任务需要的时间范围读取条目：先 view=brief 和 limit 分页筛选，再按需读取正文或历史版本。",
+  "只读身份不能创建、追加版本、修改、上传、删除、标记已读、归档、完成或上报运行结果。",
+  "需要写回汇总结果时，必须另用有写权限的身份，不能把只读密钥当作写入凭证。",
+  "next_cursor 不为 null 时继续读取，不能把单页结果当成全部数据。",
+];
+
+const WRITER_WORKFLOW: string[] = [
+  "先按任务选择时间范围读取已有条目，归档和已完成内容可用 start、end、time_field 限定，避免历史数据超出上下文。",
+  "先用 view=brief 和 limit 分页筛选，按需读取正文；next_cursor 不为 null 表示该范围仍有更多结果，可保存游标分批处理。",
+  "同一件事没有新事实时，不创建条目、不追加相同版本，也不重复生成待办。",
+  "确有新进展时，携带刚读取的 base_version 向原条目追加完整版本；完成状态会保留。",
+  "只有新的独立事项才创建新条目。写请求结果未知时先读取确认，不要盲目重试。",
+];
 
 export function getQuickStart(actor: Actor): QuickStartDocument {
   const role = discoveryRole(actor);
   return {
     service: "Personal Hub",
-    purpose: "保存外部 Agent 产生的条目、完整历史版本、简单待办和私有图片。平台不执行语义去重。",
+    purpose: role === "reader"
+      ? "按授权范围读取外部 Agent 产生的条目、历史版本、待办和私有图片。只读身份不能向平台写入任何业务数据。"
+      : "保存外部 Agent 产生的条目、完整历史版本、简单待办和私有图片。平台不执行语义去重。",
     api_version: "v1",
     credential_role: role,
     authentication: authenticationFor(role),
     available_routes: routesFor(role),
-    workflow: [
-      "先按任务选择时间范围读取已有条目，归档和已完成内容可用 start、end、time_field 限定，避免历史数据超出上下文。",
-      "先用 view=brief 和 limit 分页筛选，按需读取正文；next_cursor 不为 null 表示该范围仍有更多结果，可保存游标分批处理。",
-      "同一件事没有新事实时，不创建条目、不追加相同版本，也不重复生成待办。",
-      "确有新进展时，携带刚读取的 base_version 向原条目追加完整版本；完成状态会保留。",
-      "只有新的独立事项才创建新条目。写请求结果未知时先读取确认，不要盲目重试。",
-    ],
+    workflow: role === "reader" ? READER_WORKFLOW : WRITER_WORKFLOW,
     pagination: {
       request: "使用 limit 和可选 cursor；切换筛选条件后从无 cursor 的第一页重新开始。",
       response: "列表响应为 { items, next_cursor }。",
@@ -189,6 +214,29 @@ const MANAGER_DOCS = `## 当前凭据角色：总管 Agent
 总管创建和更新内容时，目标 Agent 仍是资源 owner，总管仅记录为实际操作者。
 `;
 
+const READER_DOCS = `## 当前凭据角色：只读 Agent
+
+只可使用 \`/api/v1/reader\` 前缀和 \`/api/v1/media\`。读取范围由管理员配置，随时可能调整。
+
+- \`GET /api/v1/reader\`：自身配置、读取模式与权限版本。
+- \`GET /api/v1/reader/agents\`：分页列出授权范围内的内容来源（id、name、description、display_mode、status、main_entry_id）。空授权返回空页。
+- \`GET /api/v1/reader/entries\`：授权范围内的条目。支持 \`agent_id\`、\`view\`、\`query\`、\`start\`、\`end\`、\`time_field\`、\`completion\`、\`archived\`、\`important\`、\`read\`、\`order\`、\`limit\`、\`cursor\`。默认 \`view=brief\`、\`order=id_asc\`。
+- \`GET /api/v1/reader/entries/{id}\`：当前正文。
+- \`GET /api/v1/reader/entries/{id}/versions[/{version}]\`：历史版本目录或指定版本正文。
+- \`GET /api/v1/reader/tasks\`：授权范围内的待办，支持 \`agent_id\`、\`done\`、\`limit\`、\`cursor\`；保留已完成和归档关联记录，便于汇总与去重。
+- \`GET /api/v1/media/{attachment_id}\`：授权范围内的私有图片，响应为 private、no-store。
+
+限制与恢复约定：
+
+- 只读身份不能调用任何写入接口；直接请求普通、总管、管理员命名空间一律返回 403。
+- 只读身份没有调度执行能力，不能调用 report，也不会成为条目、待办或附件的 owner。
+- 未授权的 agent_id，以及越权或不存在的条目、版本、附件，统一返回 404，不区分“无权”和“不存在”。
+- 只读接口按身份限流（同一身份的不同密钥共用额度）。超限返回 429 与 \`Retry-After\`，请按其退避；限流服务异常返回 503。
+- 游标只绑定同一身份、同一权限版本和同一筛选条件。损坏、身份不同或筛选条件变化的游标返回 \`400 invalid_cursor\`；管理员调整了你的读取范围时返回 \`400 cursor_scope_changed\` 并带 \`details.restart_from_first_page = true\`。
+- 收到 \`cursor_scope_changed\` 时，丢弃本次翻页已积累的结果和游标，用原筛选条件重读第一页；一次读取流程最多自动重启一次，连续变更则停止并提示，避免循环请求。其他 400 表示参数错误，401/403 与 404 应停止并检查凭证或目标，不要无界重试。
+- 读取正文、归档、历史版本、待办和图片都不会改变已读、完成或归档状态。
+`;
+
 const ADMIN_DOCS = `## 当前凭据角色：管理员
 
 使用 \`/api/v1/admin\` 前缀。所有 POST、PATCH、DELETE 都要求请求 Origin 与 APP_ORIGIN 相同。
@@ -212,6 +260,12 @@ const ADMIN_DOCS = `## 当前凭据角色：管理员
 
 export function getFullApiDocs(actor: Actor): string {
   const role = discoveryRole(actor);
-  const roleDocs = role === "admin" ? ADMIN_DOCS : role === "manager" ? MANAGER_DOCS : AGENT_DOCS;
+  const roleDocs = role === "admin"
+    ? ADMIN_DOCS
+    : role === "manager"
+      ? MANAGER_DOCS
+      : role === "reader"
+        ? READER_DOCS
+        : AGENT_DOCS;
   return `${COMMON_DOCS}\n${roleDocs}`;
 }

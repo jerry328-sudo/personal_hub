@@ -50,6 +50,7 @@ npm run build
 
 - [产品与架构设计](docs/design.md)：角色权限、数据模型、接口、状态语义和安全边界。
 - [项目模块与函数设计](docs/module-design.md)：目录结构、模块职责、函数契约、事务边界和测试范围。
+- [只读 Agent 功能规划](docs/readonly-agent-plan.md)：已实现（未部署）的只读身份、来源授权、角色隔离、授权事务、API、限流与日志边界、管理界面和验收方案。
 - [本地开发手册](docs/development.md)：本地秘密、D1 迁移、运行、调试和功能检查。
 - [部署与恢复手册](docs/deployment.md)：staging/production 资源、Secrets、发布、smoke checks 与 D1/R2 联合恢复。
 - [交互原型](design/prototype.html) 与 [模板说明](design/README.md)：已确认的布局和交互基线。

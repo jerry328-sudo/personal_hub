@@ -4,6 +4,8 @@
 
 需求依据：[产品与架构设计](./design.md)。本文件说明“代码放哪里、函数做什么、调用关系是什么”。接口字段使用 snake_case，TypeScript 内部变量与函数使用 camelCase。
 
+已实现扩展：[只读 Agent 功能设计与实施计划](./readonly-agent-plan.md)。代码已完成并本地验证（迁移 `0006_readonly_agents.sql`、显式角色与默认拒绝鉴权、授权替换事务、reader 限流和访问日志），尚未部署。Actor 已改为 `role` 判别联合（`agent` / `manager` / `reader`）；数据库 `scope` 只保留在持久化与旧契约映射边界，不再参与运行时鉴权，因此本文下述按 scope 描述 Actor 的段落属于历史记录，以实际代码为准。
+
 ## 1. 整体架构
 
 采用 TypeScript + Hono + React + Vite，单 Worker、单 D1、私有 R2；不使用 Cloudflare Access。监控、调度、语义去重由外部 Agent 完成。

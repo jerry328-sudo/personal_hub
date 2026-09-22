@@ -9,14 +9,18 @@ import type { TaskQuery } from "../../../shared/validation";
 import type { ServiceContext } from "../../env";
 import {
   assertCanWriteOwner,
+  readerScopeOf,
   requireAdminActor,
   requireManagerActor,
   requireOwnAgentActor,
+  requireReaderActor,
   resolveReadScope,
+  type ReaderScope,
 } from "../../shared/authorize";
 import { badRequest, conflict, forbidden, notFound } from "../../shared/errors";
 import { newEntityId, nowIso } from "../../shared/ids";
-import { decodeCursor, encodeCursor, queryFingerprint } from "../../shared/pagination";
+import { cursorScopeFor, decodeCursor, encodeCursor, queryFingerprint } from "../../shared/pagination";
+import { findReadableSource } from "../readers/repository";
 import {
   deleteTask as deleteTaskRecord,
   findEntryOwner,
@@ -27,20 +31,41 @@ import {
   taskDto,
 } from "./repository";
 
+/** 只读身份不能复用这个入口：待办写入一律要求可写角色。 */
 function assertSupportedTaskActor(ctx: ServiceContext): void {
   if (ctx.actor.type === "admin") return;
-  if (ctx.actor.scope === "own") {
+  if (ctx.actor.role === "reader") throw forbidden("只读身份不能修改业务数据");
+  if (ctx.actor.role === "agent") {
     requireOwnAgentActor(ctx.actor);
     return;
   }
   requireManagerActor(ctx.actor);
 }
 
+/**
+ * 待办读取的只读分支。显式指定来源时必须落在授权范围内，越权与不存在
+ * 返回同样的 404，不通过错误消息透露来源名称。
+ */
+async function readerAccessForList(
+  ctx: ServiceContext,
+  requestedAgentId: string | undefined,
+): Promise<ReaderScope | null> {
+  const actor = ctx.actor;
+  if (actor.type !== "agent" || actor.role !== "reader") return null;
+  requireReaderActor(actor);
+  const reader = readerScopeOf(actor);
+  if (requestedAgentId !== undefined) {
+    const readable = await findReadableSource(ctx.env.DB, reader, requestedAgentId);
+    if (!readable) throw notFound("来源不存在");
+  }
+  return reader;
+}
+
 function effectiveOwnerForRead(ctx: ServiceContext, requestedAgentId?: string): string | undefined {
   assertSupportedTaskActor(ctx);
   if (
     ctx.actor.type === "agent"
-    && ctx.actor.scope === "own"
+    && ctx.actor.role === "agent"
     && requestedAgentId !== undefined
     && requestedAgentId !== ctx.actor.agentId
   ) {
@@ -51,17 +76,27 @@ function effectiveOwnerForRead(ctx: ServiceContext, requestedAgentId?: string): 
 }
 
 export async function listTasks(ctx: ServiceContext, query: TaskQuery): Promise<Page<TaskDto>> {
-  const agentId = effectiveOwnerForRead(ctx, query.agent_id);
+  const readerAccess = await readerAccessForList(ctx, query.agent_id);
+  // 只读身份不用单个 owner 过滤；授权范围由 SQL 谓词决定。
+  const agentId = readerAccess === null ? effectiveOwnerForRead(ctx, query.agent_id) : query.agent_id;
   const done = query.done === "yes" ? true : query.done === "no" ? false : undefined;
   const limit = query.limit ?? LIMITS.defaultPageSize;
+  // 只读身份保留授权来源的已完成和归档关联记录，便于汇总与去重，
+  // 因此只有管理员才按网页规则隐藏归档条目。
   const excludeArchivedEntries = ctx.actor.type === "admin";
-  const fingerprint = queryFingerprint({ agentId, done: query.done ?? "all", excludeArchivedEntries, order: "id_asc" });
-  const cursor = decodeCursor(query.cursor, fingerprint);
+  const fingerprint = queryFingerprint({
+    agentId: agentId ?? null,
+    done: query.done ?? "all",
+    excludeArchivedEntries,
+    order: "id_asc",
+  });
+  const cursor = decodeCursor(query.cursor, fingerprint, cursorScopeFor(ctx.actor));
   if (cursor !== null && cursor.length !== 1) throw badRequest("分页游标无效");
 
   const rows = await listTaskRecords(ctx.env.DB, {
     excludeArchivedEntries,
     ...(agentId === undefined ? {} : { agentId }),
+    ...(readerAccess === null ? {} : { readerAccess }),
     ...(done === undefined ? {} : { done }),
     ...(cursor?.[0] === undefined ? {} : { afterId: cursor[0] }),
     limit: limit + 1,
@@ -72,7 +107,9 @@ export async function listTasks(ctx: ServiceContext, query: TaskQuery): Promise<
 
   return {
     items: visibleRows.map(taskDto),
-    next_cursor: hasMore && last ? encodeCursor([last.id], fingerprint) : null,
+    next_cursor: hasMore && last
+      ? encodeCursor([last.id], fingerprint, cursorScopeFor(ctx.actor))
+      : null,
   };
 }
 
@@ -83,7 +120,7 @@ async function resolveCreateOwner(
   assertSupportedTaskActor(ctx);
   const entryId = input.entry_id ?? null;
   if (entryId !== null) {
-    const ownOwner = ctx.actor.type === "agent" && ctx.actor.scope === "own"
+    const ownOwner = ctx.actor.type === "agent" && ctx.actor.role === "agent"
       ? ctx.actor.agentId
       : undefined;
     const entry = await findEntryOwner(ctx.env.DB, entryId, ownOwner);
@@ -100,7 +137,7 @@ async function resolveCreateOwner(
     assertCanWriteOwner(ctx.actor, ownerId);
     return { ownerId, entryId: null };
   }
-  if (ctx.actor.scope === "own") {
+  if (ctx.actor.role === "agent") {
     if (input.agent_id !== undefined && input.agent_id !== ctx.actor.agentId) throw forbidden();
     assertCanWriteOwner(ctx.actor, ctx.actor.agentId);
     return { ownerId: ctx.actor.agentId, entryId: null };
@@ -130,7 +167,7 @@ export async function createTask(ctx: ServiceContext, input: CreateTaskInput): P
 
 function taskOwnerFilter(ctx: ServiceContext): string | undefined {
   assertSupportedTaskActor(ctx);
-  return ctx.actor.type === "agent" && ctx.actor.scope === "own"
+  return ctx.actor.type === "agent" && ctx.actor.role === "agent"
     ? ctx.actor.agentId
     : undefined;
 }
@@ -156,7 +193,7 @@ export async function updateTask(
 }
 
 export async function deleteTask(ctx: ServiceContext, id: string): Promise<void> {
-  if (ctx.actor.type === "agent" && ctx.actor.scope === "all") {
+  if (ctx.actor.type === "agent" && ctx.actor.role === "manager") {
     throw forbidden("总管 Agent 不能删除待办");
   }
   if (ctx.actor.type === "admin") {

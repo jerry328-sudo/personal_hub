@@ -28,6 +28,12 @@
       "name": "LOGIN_RATE_LIMITER",
       "namespace_id": "1001",
       "simple": { "limit": 10, "period": 60 }
+    },
+    {
+      // 必须使用独立 namespace_id：共用命名空间的绑定会共享计数器。
+      "name": "READER_RATE_LIMITER",
+      "namespace_id": "1002",
+      "simple": { "limit": 120, "period": 60 }
     }
   ],
   "vars": {
@@ -62,6 +68,10 @@
         "name": "LOGIN_RATE_LIMITER",
         "namespace_id": "918202601",
         "simple": { "limit": 10, "period": 60 }
+      }, {
+        "name": "READER_RATE_LIMITER",
+        "namespace_id": "918202602",
+        "simple": { "limit": 120, "period": 60 }
       }],
       "vars": {
         "APP_ORIGIN": "https://personal-hub.echem.ai",

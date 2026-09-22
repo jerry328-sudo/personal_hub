@@ -81,7 +81,7 @@ export function AppShell() {
     };
   }, []);
 
-  const visibleAgents = agents.filter((agent) => agent.id !== "manual" && agent.scope === "own" && agent.status !== "removed" && agent.status !== "deleting");
+  const visibleAgents = agents.filter((agent) => agent.id !== "manual" && agent.role === "agent" && agent.status !== "removed" && agent.status !== "deleting");
   const context = useMemo(() => ({ agents, agentsLoading, refreshShell, openNavigation: () => setNavOpen(true) }), [agents, agentsLoading, refreshShell]);
 
   const signOut = async () => {

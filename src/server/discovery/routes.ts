@@ -1,6 +1,6 @@
 import type { Hono } from "hono";
 import type { AppContext, AppEnv } from "../env";
-import { requireIdentity } from "../modules/auth/middleware";
+import { ALL_ROLES, requireIdentity } from "../modules/auth/middleware";
 import { getFullApiDocs, getQuickStart } from "./content";
 
 function setDiscoveryHeaders(c: AppContext): void {
@@ -10,12 +10,12 @@ function setDiscoveryHeaders(c: AppContext): void {
 }
 
 export function registerDiscoveryRoutes(app: Hono<AppEnv>): void {
-  app.get("/api", requireIdentity(), (c) => {
+  app.get("/api", requireIdentity(ALL_ROLES), (c) => {
     setDiscoveryHeaders(c);
     return c.json(getQuickStart(c.get("actor")));
   });
 
-  app.get("/api/docs", requireIdentity(), (c) => {
+  app.get("/api/docs", requireIdentity(ALL_ROLES), (c) => {
     setDiscoveryHeaders(c);
     return c.text(getFullApiDocs(c.get("actor")));
   });

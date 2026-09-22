@@ -1,3 +1,6 @@
+import type { ReadScope } from "../../shared/authorize";
+import { appendReadAccessPredicate } from "../../shared/read-access";
+
 export interface AttachmentRow {
   id: string;
   agent_id: string;
@@ -129,6 +132,35 @@ export async function findAttachment(db: D1Database, id: string): Promise<Attach
     FROM attachments
     WHERE id = ?
   `).bind(id).first<AttachmentRow>();
+}
+
+/**
+ * 按当前身份范围查找附件。只读身份走授权谓词，越权与不存在都返回 null，
+ * 调用方统一转成 404，不会泄露文件名、大小或对象地址。
+ */
+export async function findAttachmentForScope(
+  db: D1Database,
+  id: string,
+  scope: ReadScope,
+): Promise<AttachmentRow | null> {
+  const where = ["a.id = ?"];
+  const bindings: unknown[] = [id];
+  if (scope.kind === "reader") {
+    if (scope.agentId) {
+      where.push("a.agent_id = ?");
+      bindings.push(scope.agentId);
+    }
+    appendReadAccessPredicate("a.agent_id", scope.reader, where, bindings);
+  } else if (scope.agentId) {
+    where.push("a.agent_id = ?");
+    bindings.push(scope.agentId);
+  }
+  return db.prepare(`
+    SELECT a.id, a.agent_id, a.object_key, a.filename, a.content_type, a.size,
+           a.created_by_agent_id, a.created_at
+    FROM attachments AS a
+    WHERE ${where.join(" AND ")}
+  `).bind(...bindings).first<AttachmentRow>();
 }
 
 export async function findAttachmentsByIds(

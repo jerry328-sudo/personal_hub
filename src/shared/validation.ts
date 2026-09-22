@@ -8,13 +8,50 @@ const nullableHttpUrl = z.string().url().refine((value) => {
 
 const isoDateTime = z.string().datetime({ offset: true });
 
+const readAccessShape = z.object({
+  mode: z.enum(["selected", "all"]),
+  agent_ids: z.array(z.string().min(1).max(200)).max(LIMITS.maxReadTargets).optional().default([]),
+}).strict().refine(
+  (value) => value.mode === "all" ? (value.agent_ids?.length ?? 0) === 0 : true,
+  { message: "mode 为 all 时不能提交 agent_ids", path: ["agent_ids"] },
+);
+
 export const createAgentSchema = z.object({
   name: z.string().trim().min(1).max(LIMITS.agentNameCharacters),
   description: z.string().trim().max(LIMITS.agentDescriptionCharacters).optional().default(""),
-  scope: z.enum(["own", "all"]).optional().default("own"),
+  scope: z.enum(["own", "all"]).optional(),
+  role: z.enum(["agent", "manager", "reader"]).optional(),
+  read_access: readAccessShape.optional(),
   display_mode: z.enum(["feed", "list", "report"]).optional().default("feed"),
   key_expires_at: isoDateTime.nullable().optional(),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if (value.role !== undefined && value.scope !== undefined) {
+    ctx.addIssue({ code: "custom", message: "role 与 scope 不能同时提交", path: ["role"] });
+    return;
+  }
+  if (value.read_access !== undefined && value.role !== "reader") {
+    ctx.addIssue({ code: "custom", message: "只有只读身份可以提交 read_access", path: ["read_access"] });
+    return;
+  }
+  if (value.role === "reader") {
+    if (value.read_access === undefined) {
+      ctx.addIssue({ code: "custom", message: "只读身份必须提供 read_access", path: ["read_access"] });
+      return;
+    }
+    if (value.read_access.mode === "selected" && (value.read_access.agent_ids?.length ?? 0) === 0) {
+      ctx.addIssue({ code: "custom", message: "新建只读身份至少选择一个来源", path: ["read_access", "agent_ids"] });
+    }
+  }
+});
+
+export const updateReadAccessSchema = z.object({
+  base_revision: z.number().int().nonnegative(),
+  mode: z.enum(["selected", "all"]),
+  agent_ids: z.array(z.string().min(1).max(200)).max(LIMITS.maxReadTargets).optional().default([]),
+}).strict().refine(
+  (value) => value.mode === "all" ? (value.agent_ids?.length ?? 0) === 0 : true,
+  { message: "mode 为 all 时不能提交 agent_ids", path: ["agent_ids"] },
+);
 
 export const updateAgentSchema = z.object({
   name: z.string().trim().min(1).max(LIMITS.agentNameCharacters).optional(),

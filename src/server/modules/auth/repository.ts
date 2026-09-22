@@ -1,5 +1,5 @@
 import type { AgentKeyMetadataDto } from "../../../shared/contracts";
-import type { AgentScope, AgentStatus } from "../../env";
+import type { AgentAccessMode, AgentReadMode, AgentScope, AgentStatus } from "../../env";
 import { conflict } from "../../shared/errors";
 
 const MAX_LIVE_KEYS_PER_AGENT = 2;
@@ -17,6 +17,9 @@ export type AgentKeyWithAgent = AgentKeyInsert & {
   lastUsedAt: string | null;
   scope: AgentScope;
   status: AgentStatus;
+  accessMode: AgentAccessMode;
+  readMode: AgentReadMode | null;
+  permissionsRevision: number;
 };
 
 export type AgentKeyTarget = {
@@ -48,6 +51,9 @@ type AgentKeyWithAgentRow = {
   last_used_at: string | null;
   agent_scope: AgentScope;
   agent_status: AgentStatus;
+  agent_access_mode: AgentAccessMode;
+  agent_read_mode: AgentReadMode | null;
+  agent_permissions_revision: number;
 };
 
 type AgentKeyMetadataRow = {
@@ -82,6 +88,9 @@ function mapKeyWithAgent(row: AgentKeyWithAgentRow): AgentKeyWithAgent {
     lastUsedAt: row.last_used_at,
     scope: row.agent_scope,
     status: row.agent_status,
+    accessMode: row.agent_access_mode,
+    readMode: row.agent_read_mode,
+    permissionsRevision: row.agent_permissions_revision,
   };
 }
 
@@ -136,7 +145,10 @@ export async function findKeyWithAgent(
          key_record.revoked_at,
          key_record.last_used_at,
          agent.scope AS agent_scope,
-         agent.status AS agent_status
+         agent.status AS agent_status,
+         agent.access_mode AS agent_access_mode,
+         agent.read_mode AS agent_read_mode,
+         agent.permissions_revision AS agent_permissions_revision
        FROM agent_keys AS key_record
        INNER JOIN agents AS agent ON agent.id = key_record.agent_id
        WHERE key_record.id = ?

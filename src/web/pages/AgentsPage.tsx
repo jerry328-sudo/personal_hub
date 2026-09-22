@@ -8,11 +8,19 @@ import {
   RefreshCw,
   Search,
   Settings,
+  ShieldCheck,
   Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import type { AgentDto, AgentKeyMetadataDto, AgentScope, DisplayMode, IssuedKeyDto } from "../../shared/contracts";
-import { agentsApi, keysApi, notifyDataChanged } from "../api";
+import type {
+  AgentDto,
+  AgentKeyMetadataDto,
+  AgentReadMode,
+  AgentRole,
+  DisplayMode,
+  IssuedKeyDto,
+} from "../../shared/contracts";
+import { ApiError, agentsApi, keysApi, notifyDataChanged, readAccessApi } from "../api";
 import { useAppShell } from "../components/AppShell";
 import { AgentBadge, ConfirmDialog, Dialog, EmptyState, ErrorState, LoadingState, StatusPill, useToast } from "../components/ui";
 import { formatDateTime, relativeTime } from "../lib/format";
@@ -40,9 +48,10 @@ function KeyExpiryInput({ value, onChange, label }: { value: string; onChange: (
   </label>;
 }
 
-function AgentForm({ open, agent, onClose, onSaved, onIssued }: {
+function AgentForm({ open, agent, sourceOptions, onClose, onSaved, onIssued }: {
   open: boolean;
   agent: AgentDto | null;
+  sourceOptions: { id: string; name: string }[];
   onClose: () => void;
   onSaved: () => void;
   onIssued: (key: IssuedKeyDto, agentName: string) => void;
@@ -50,7 +59,9 @@ function AgentForm({ open, agent, onClose, onSaved, onIssued }: {
   const { showToast } = useToast();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [scope, setScope] = useState<AgentScope>("own");
+  const [role, setRole] = useState<AgentRole>("agent");
+  const [readMode, setReadMode] = useState<AgentReadMode>("selected");
+  const [sources, setSources] = useState<string[]>([]);
   const [displayMode, setDisplayMode] = useState<DisplayMode>("feed");
   const [expires, setExpires] = useState("");
   const [busy, setBusy] = useState(false);
@@ -59,28 +70,45 @@ function AgentForm({ open, agent, onClose, onSaved, onIssued }: {
     if (!open) return;
     setName(agent?.name ?? "");
     setDescription(agent?.description ?? "");
-    setScope(agent?.scope ?? "own");
+    setRole(agent?.role ?? "agent");
+    setReadMode(agent?.read_mode ?? "selected");
+    setSources([]);
     setDisplayMode(agent?.display_mode ?? "feed");
     setExpires(agent ? "" : defaultExpiryDate());
   }, [agent, open]);
 
+  const isReader = role === "reader";
+  const creatingReader = isReader && !agent;
+  const missingSource = creatingReader && readMode === "selected" && sources.length === 0;
+
+  const toggleSource = (id: string, checked: boolean) => {
+    setSources((current) => checked ? [...current, id] : current.filter((item) => item !== id));
+  };
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (missingSource) return;
     setBusy(true);
     try {
       if (agent) {
-        await agentsApi.update(agent.id, { name: name.trim(), description: description.trim(), display_mode: displayMode });
+        await agentsApi.update(agent.id, {
+          name: name.trim(),
+          description: description.trim(),
+          ...(agent.role === "reader" ? {} : { display_mode: displayMode }),
+        });
         showToast("Agent 设置已保存");
       } else {
         const result = await agentsApi.create({
           name: name.trim(),
           description: description.trim(),
-          scope,
-          display_mode: displayMode,
+          role,
+          ...(isReader
+            ? { read_access: { mode: readMode, agent_ids: readMode === "selected" ? sources : [] } }
+            : { display_mode: displayMode }),
           key_expires_at: expires ? new Date(`${expires}T23:59:00`).toISOString() : null,
         });
         onIssued(result.key, result.agent.name);
-        showToast("Agent 已创建");
+        showToast(isReader ? "只读 Agent 已创建" : "Agent 已创建");
       }
       notifyDataChanged();
       onSaved();
@@ -94,31 +122,193 @@ function AgentForm({ open, agent, onClose, onSaved, onIssued }: {
 
   return (
     <Dialog open={open} title={agent ? "Agent 设置" : "新增 Agent"} onClose={onClose}>
-      <p className="dialog-description">{agent ? "名称和说明可以调整，编号与权限范围保持不变。" : "为新的信息来源取一个名字，并签发第一把独立密钥。"}</p>
+      <p className="dialog-description">{agent
+        ? agent.role === "reader"
+          ? "只读身份的名称和说明可以调整，读取范围请用列表上的“编辑读取范围”。"
+          : "名称和说明可以调整，编号与权限范围保持不变。"
+        : "为新的信息来源取一个名字，并签发第一把独立密钥。"}</p>
       <form onSubmit={submit}>
         <label className="field">名称<input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label>
         <label className="field">说明<textarea maxLength={500} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个 Agent 负责关注什么？" /></label>
         {agent ? null : (
-          <label className="field">权限范围
-            <select value={scope} onChange={(event) => setScope(event.target.value as AgentScope)}>
-              <option value="own">普通 Agent · 仅管理自身</option>
-              <option value="all">总管 Agent · 跨来源管理</option>
+          <label className="field">身份
+            <select value={role} onChange={(event) => setRole(event.target.value as AgentRole)}>
+              <option value="agent">普通 Agent · 仅管理自身</option>
+              <option value="manager">总管 Agent · 跨来源管理</option>
+              <option value="reader">只读 Agent · 只读取授权范围</option>
             </select>
-            <small>总管是管理身份，不会成为内容分区。</small>
+            <small>{isReader ? "只读身份没有内容分区，不能创建、修改或上报任何业务数据。" : "总管是管理身份，不会成为内容分区。"}</small>
           </label>
         )}
-        {scope === "own" ? (
+        {creatingReader ? (
+          <>
+            <label className="field">读取范围
+              <select value={readMode} onChange={(event) => setReadMode(event.target.value as AgentReadMode)}>
+                <option value="selected">指定 Agent</option>
+                <option value="all">全部内容分区</option>
+              </select>
+              {readMode === "all"
+                ? <small>包含手动记录及未来新增的 Agent 内容。</small>
+                : <small>新建只读身份至少选择一个来源，保存后仍可用“编辑读取范围”调整。</small>}
+            </label>
+            {readMode === "selected" ? (
+              <fieldset className="field source-picker">
+                <legend>来源（已选 {sources.length}）</legend>
+                {sourceOptions.length === 0
+                  ? <p className="key-meta">还没有可授权的内容来源。</p>
+                  : sourceOptions.map((option) => (
+                    <label className="checkbox-field" key={option.id}>
+                      <input type="checkbox" checked={sources.includes(option.id)} onChange={(event) => toggleSource(option.id, event.target.checked)} />
+                      {option.name}
+                    </label>
+                  ))}
+              </fieldset>
+            ) : null}
+          </>
+        ) : null}
+        {isReader ? null : (
           <label className="field">默认展示
             <select value={displayMode} onChange={(event) => setDisplayMode(event.target.value as DisplayMode)}>
               <option value="feed">信息流</option><option value="list">清单</option><option value="report">报告</option>
             </select>
           </label>
-        ) : null}
+        )}
         {agent ? null : (
           <KeyExpiryInput label="首把密钥有效期" value={expires} onChange={setExpires} />
         )}
-        <div className="dialog-actions"><button className="btn" type="button" onClick={onClose}>取消</button><button className="btn primary" disabled={busy} type="submit">{busy ? "保存中…" : agent ? "保存修改" : "创建 Agent"}</button></div>
+        <div className="dialog-actions">
+          <button className="btn" type="button" onClick={onClose}>取消</button>
+          <button className="btn primary" disabled={busy || missingSource} type="submit">
+            {busy ? "保存中…" : agent ? "保存修改" : "创建 Agent"}
+          </button>
+        </div>
       </form>
+    </Dialog>
+  );
+}
+
+function readAccessSummary(agent: AgentDto): string {
+  if (agent.read_mode === "all") return "全部来源";
+  if (!agent.read_source_count) return "未授权任何来源";
+  return `指定 ${agent.read_source_count} 个来源`;
+}
+
+export function ReadAccessDialog({ agent, sourceOptions, onClose, onSaved }: {
+  agent: AgentDto;
+  sourceOptions: { id: string; name: string }[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { showToast } = useToast();
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [stale, setStale] = useState(false);
+  const [revision, setRevision] = useState<number | null>(null);
+  const [mode, setMode] = useState<AgentReadMode>("selected");
+  const [sources, setSources] = useState<string[]>([]);
+  const [grantedNames, setGrantedNames] = useState<Record<string, string>>({});
+
+  const load = () => {
+    setLoading(true);
+    setStale(false);
+    setLoadError(null);
+    setRevision(null);
+    setMode("selected");
+    setSources([]);
+    setGrantedNames({});
+    setLoadAttempt((attempt) => attempt + 1);
+  };
+
+  useEffect(() => {
+    // 每个 Agent 由独立 key 挂载；卸载/重试后，旧请求不得改变新表单。
+    let cancelled = false;
+    readAccessApi.get(agent.id)
+      .then((access) => {
+        if (cancelled) return;
+        setRevision(access.revision);
+        setMode(access.mode);
+        setSources(access.sources.map((source) => source.id));
+        setGrantedNames(Object.fromEntries(access.sources.map((source) => [source.id, source.name])));
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) setLoadError(reason instanceof Error ? reason.message : "读取范围读取失败");
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [agent.id, loadAttempt]);
+
+  const toggleSource = (id: string, checked: boolean) => {
+    setSources((current) => checked ? [...current, id] : current.filter((item) => item !== id));
+  };
+
+  const save = async () => {
+    if (loading || loadError || busy || stale || revision === null) return;
+    setBusy(true);
+    try {
+      const access = await readAccessApi.replace(agent.id, {
+        base_revision: revision,
+        mode,
+        agent_ids: mode === "selected" ? sources : [],
+      });
+      setRevision(access.revision);
+      setSources(access.sources.map((source) => source.id));
+      setStale(false);
+      showToast("读取范围已更新，同一密钥的后续请求立即生效");
+      notifyDataChanged();
+      onSaved();
+    } catch (reason) {
+      // 并发修改时不静默覆盖另一处改动，保留用户当前选择并提示重新加载。
+      if (reason instanceof ApiError && reason.status === 409) setStale(true);
+      showToast(reason instanceof Error ? reason.message : "保存失败", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 已授权但当前不可选（已移除/停用）的来源继续展示，便于管理员自行取消勾选。
+  const selectableIds = new Set(sourceOptions.map((option) => option.id));
+  const extraGranted = sources.filter((id) => !selectableIds.has(id));
+
+  return (
+    <Dialog open title={`${agent.name} · 读取范围`} onClose={onClose}>
+      {loading ? <LoadingState /> : loadError ? <ErrorState message={loadError} onRetry={load} /> : <>
+        {stale ? (
+          <p className="key-warning"><strong>读取范围已被其他操作修改</strong><span>当前页面上的选择已保留，但没有保存。重新加载后再确认要提交的范围。</span></p>
+        ) : null}
+        <label className="field">范围模式
+          <select disabled={busy} value={mode} onChange={(event) => setMode(event.target.value as AgentReadMode)}>
+            <option value="selected">指定 Agent</option>
+            <option value="all">全部内容分区</option>
+          </select>
+          {mode === "all"
+            ? <small>动态包含现有和未来新增的内容分区，包括手动记录。</small>
+            : <small>可以保存空清单，含义是无权读取任何业务内容，不等于全部范围。</small>}
+        </label>
+        {mode === "selected" ? (
+          <fieldset className="field source-picker" disabled={busy}>
+            <legend>来源（已选 {sources.length}）</legend>
+            {sourceOptions.map((option) => (
+              <label className="checkbox-field" key={option.id}>
+                <input type="checkbox" checked={sources.includes(option.id)} onChange={(event) => toggleSource(option.id, event.target.checked)} />
+                {option.name}
+              </label>
+            ))}
+            {extraGranted.map((id) => (
+              <label className="checkbox-field" key={id}>
+                <input type="checkbox" checked onChange={(event) => toggleSource(id, event.target.checked)} />
+                {grantedNames[id] ?? id}（当前不可作为新授权目标）
+              </label>
+            ))}
+          </fieldset>
+        ) : null}
+        <p className="key-meta">权限版本 {revision ?? "—"}。保存后旧分页游标会失效，调用方需要从第一页重新读取。</p>
+        <div className="dialog-actions">
+          <button className="btn" type="button" onClick={stale ? load : onClose}>{stale ? "重新加载" : "取消"}</button>
+          <button className="btn primary" type="button" disabled={busy || stale || revision === null} onClick={() => void save()}>{busy ? "保存中…" : "保存读取范围"}</button>
+        </div>
+      </>}
     </Dialog>
   );
 }
@@ -213,6 +403,7 @@ export function AgentsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<AgentDto | null>(null);
   const [keyAgent, setKeyAgent] = useState<AgentDto | null>(null);
+  const [accessAgent, setAccessAgent] = useState<AgentDto | null>(null);
   const [issued, setIssued] = useState<{ key: IssuedKeyDto; agentName: string } | null>(null);
   const [confirm, setConfirm] = useState<{ agent: AgentDto; action: "remove" | "purge" } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -228,6 +419,15 @@ export function AgentsPage() {
     if (!showRemoved && (agent.status === "removed" || agent.status === "deleting")) return false;
     return `${agent.name} ${agent.description} ${agent.id}`.toLowerCase().includes(search.trim().toLowerCase());
   }), [agents, search, showRemoved]);
+
+  // 可授权的来源：手动记录分区加上全部可写的普通内容分区。
+  const sourceOptions = useMemo(() => {
+    const manual = agents.find((agent) => agent.id === "manual");
+    const partitions = agents
+      .filter((agent) => agent.id !== "manual" && agent.role === "agent" && agent.status !== "deleting")
+      .map((agent) => ({ id: agent.id, name: agent.name }));
+    return manual ? [{ id: manual.id, name: manual.name }, ...partitions] : partitions;
+  }, [agents]);
 
   const applyLifecycle = async (agent: AgentDto, action: "enable" | "disable" | "restore") => {
     try {
@@ -279,9 +479,10 @@ export function AgentsPage() {
             const [label, tone] = statusCopy[agent.status];
             return <article className="agent-card" key={agent.id}>
               <AgentBadge name={agent.name} index={index} size="large" />
-              <div className="agent-info"><h2>{agent.name}<StatusPill tone={tone}>{label}</StatusPill>{agent.scope === "all" ? <StatusPill tone="warning">总管</StatusPill> : null}</h2><p>{agent.description || "暂无说明"}</p><div className="agent-state">{agent.id} · 最近上报 {relativeTime(agent.last_report_at)}{agent.last_result === "failed" ? " · 上次失败" : ""}</div></div>
+              <div className="agent-info"><h2>{agent.name}<StatusPill tone={tone}>{label}</StatusPill>{agent.role === "manager" ? <StatusPill tone="warning">总管</StatusPill> : null}{agent.role === "reader" ? <StatusPill tone="muted">只读</StatusPill> : null}</h2><p>{agent.description || "暂无说明"}</p><div className="agent-state">{agent.role === "reader" ? `${agent.id} · 读取范围 ${readAccessSummary(agent)}` : `${agent.id} · 最近上报 ${relativeTime(agent.last_report_at)}${agent.last_result === "failed" ? " · 上次失败" : ""}`}</div></div>
               <div className="agent-actions">
                 <button className="btn" type="button" onClick={() => setKeyAgent(agent)}><KeyRound aria-hidden="true" />接入与密钥</button>
+                {agent.role === "reader" ? <button className="btn" type="button" onClick={() => setAccessAgent(agent)}><ShieldCheck aria-hidden="true" />编辑读取范围</button> : null}
                 <button className="btn" type="button" onClick={() => { setEditing(agent); setFormOpen(true); }}><Settings aria-hidden="true" />设置</button>
                 {agent.status === "active" ? <button className="btn" type="button" onClick={() => void applyLifecycle(agent, "disable")}><Ban aria-hidden="true" />停用</button> : null}
                 {agent.status === "disabled" ? <button className="btn" type="button" onClick={() => void applyLifecycle(agent, "enable")}><Play aria-hidden="true" />启用</button> : null}
@@ -293,8 +494,9 @@ export function AgentsPage() {
           })}
         </div>
       ) : <EmptyState title="没有符合条件的 Agent" />}
-      <AgentForm open={formOpen} agent={editing} onClose={() => setFormOpen(false)} onSaved={load} onIssued={(key, agentName) => setIssued({ key, agentName })} />
+      <AgentForm open={formOpen} agent={editing} sourceOptions={sourceOptions} onClose={() => setFormOpen(false)} onSaved={load} onIssued={(key, agentName) => setIssued({ key, agentName })} />
       <KeysDialog agent={keyAgent} open={Boolean(keyAgent)} onClose={() => setKeyAgent(null)} onIssued={(key, agentName) => setIssued({ key, agentName })} />
+      {accessAgent ? <ReadAccessDialog key={accessAgent.id} agent={accessAgent} sourceOptions={sourceOptions} onClose={() => setAccessAgent(null)} onSaved={load} /> : null}
       <IssuedKeyDialog issued={issued} onClose={() => setIssued(null)} />
       <ConfirmDialog
         open={Boolean(confirm)}

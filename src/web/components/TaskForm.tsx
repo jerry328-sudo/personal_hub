@@ -54,7 +54,7 @@ export function TaskForm({
     }
   };
 
-  const selectableAgents = agents.filter((agent) => agent.id !== "manual" && agent.scope === "own" && agent.status !== "deleting");
+  const selectableAgents = agents.filter((agent) => agent.id !== "manual" && agent.role === "agent" && agent.status !== "deleting");
   return (
     <Dialog open={open} title={entry ? "从信息创建待办" : "新增待办"} onClose={onClose}>
       <p className="dialog-description">

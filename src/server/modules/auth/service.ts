@@ -4,7 +4,7 @@ import type {
   SessionDto,
   ChangeAdminSecretInput,
 } from "../../../shared/contracts";
-import type { Actor, AgentActor, ServiceContext } from "../../env";
+import type { Actor, AgentActor, AgentReadMode, AgentRoleFields, ServiceContext } from "../../env";
 import {
   conflict,
   badRequest,
@@ -50,7 +50,33 @@ const DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const MAX_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 const LOGIN_RATE_LIMIT_PREFIX = "admin-login";
 
-export type IdentityRole = "admin" | "agent" | "manager";
+export type IdentityRole = "admin" | "agent" | "manager" | "reader";
+
+/** decodeAgentRole 的结果。只包含角色判别信息，不包含身份标识。 */
+export type DecodedAgentRole =
+  | { role: "agent" }
+  | { role: "manager" }
+  | { role: "reader"; readMode: AgentReadMode; permissionsRevision: number };
+
+/**
+ * 验证数据库中 scope / access_mode / read_mode / permissions_revision 的合法组合。
+ * 未知组合一律拒绝认证，不能降级为普通或总管角色。例如 read_only 但缺少
+ * read_mode 表示权限配置缺失，必须失败而不是默认全部可读。
+ */
+export function decodeAgentRole(fields: AgentRoleFields): DecodedAgentRole {
+  const { scope, accessMode, readMode, permissionsRevision } = fields;
+  if (!Number.isSafeInteger(permissionsRevision) || permissionsRevision < 0) {
+    throw unauthenticated("Agent 密钥无效或已失效");
+  }
+  if (accessMode === "read_write" && readMode === null) {
+    if (scope === "own") return { role: "agent" };
+    if (scope === "all") return { role: "manager" };
+  }
+  if (accessMode === "read_only" && scope === "all" && (readMode === "selected" || readMode === "all")) {
+    return { role: "reader", readMode, permissionsRevision };
+  }
+  throw unauthenticated("Agent 密钥无效或已失效");
+}
 
 export interface LoginInput {
   secret: string;
@@ -87,7 +113,7 @@ function isExpired(expiresAt: string | null, now: string): boolean {
 
 function roleOf(actor: Actor): IdentityRole {
   if (actor.type === "admin") return "admin";
-  return actor.scope === "all" ? "manager" : "agent";
+  return actor.role;
 }
 
 function requireAdminActor(
@@ -233,13 +259,21 @@ export async function authenticateBearer(
   const touched = await touchKeyUsage(env.DB, parsed.id, now);
   if (!touched) throw unauthenticated("Agent 密钥已失效");
 
-  return {
-    type: "agent",
-    agentId: row.agentId,
-    keyId: row.id,
+  const decoded = decodeAgentRole({
     scope: row.scope,
-    status: row.status,
-  };
+    accessMode: row.accessMode,
+    readMode: row.readMode,
+    permissionsRevision: row.permissionsRevision,
+  });
+  const base = { type: "agent", agentId: row.agentId, keyId: row.id, status: row.status } as const;
+  return decoded.role === "reader"
+    ? {
+        ...base,
+        role: "reader",
+        readMode: decoded.readMode,
+        permissionsRevision: decoded.permissionsRevision,
+      }
+    : { ...base, role: decoded.role };
 }
 
 export async function authenticateSession(

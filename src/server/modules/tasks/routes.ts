@@ -1,4 +1,4 @@
-import type { Hono } from "hono";
+import type { Handler, Hono } from "hono";
 import type { z } from "zod";
 import { LIMITS } from "../../../shared/limits";
 import {
@@ -10,7 +10,7 @@ import type { AppContext, AppEnv } from "../../env";
 import { serviceContext } from "../../env";
 import {
   requireAdminSession,
-  requireAgentKey,
+  requireAgentRole,
 } from "../auth/middleware";
 import { badRequest } from "../../shared/errors";
 import { readLimitedJson, requireSameOrigin } from "../../shared/http";
@@ -55,34 +55,40 @@ function taskId(value: string): string {
   return value;
 }
 
+/** readers 模块复用同一个列表实现，只换一个身份准入。 */
+export const readerTaskListHandler: Handler<AppEnv> = async (c) => {
+  setPrivateResponseHeaders(c);
+  return c.json(await listTasks(serviceContext(c), parseQuery(c)));
+};
+
 export function registerTaskRoutes(app: Hono<AppEnv>): void {
-  app.get("/api/v1/agent/tasks", requireAgentKey("own"), async (c) => {
+  app.get("/api/v1/agent/tasks", requireAgentRole(["agent"]), async (c) => {
     setPrivateResponseHeaders(c);
     return c.json(await listTasks(serviceContext(c), parseQuery(c)));
   });
-  app.post("/api/v1/agent/tasks", requireAgentKey("own"), async (c) => {
+  app.post("/api/v1/agent/tasks", requireAgentRole(["agent"]), async (c) => {
     setPrivateResponseHeaders(c);
     return c.json(await createTask(serviceContext(c), await parseCreateBody(c)), 201);
   });
-  app.patch("/api/v1/agent/tasks/:id", requireAgentKey("own"), async (c) => {
+  app.patch("/api/v1/agent/tasks/:id", requireAgentRole(["agent"]), async (c) => {
     setPrivateResponseHeaders(c);
     return c.json(await updateTask(serviceContext(c), taskId(c.req.param("id")), await parsePatchBody(c)));
   });
-  app.delete("/api/v1/agent/tasks/:id", requireAgentKey("own"), async (c) => {
+  app.delete("/api/v1/agent/tasks/:id", requireAgentRole(["agent"]), async (c) => {
     setPrivateResponseHeaders(c);
     await deleteTask(serviceContext(c), taskId(c.req.param("id")));
     return c.body(null, 204);
   });
 
-  app.get("/api/v1/manager/tasks", requireAgentKey("all"), async (c) => {
+  app.get("/api/v1/manager/tasks", requireAgentRole(["manager"]), async (c) => {
     setPrivateResponseHeaders(c);
     return c.json(await listTasks(serviceContext(c), parseQuery(c)));
   });
-  app.post("/api/v1/manager/tasks", requireAgentKey("all"), async (c) => {
+  app.post("/api/v1/manager/tasks", requireAgentRole(["manager"]), async (c) => {
     setPrivateResponseHeaders(c);
     return c.json(await createTask(serviceContext(c), await parseCreateBody(c)), 201);
   });
-  app.patch("/api/v1/manager/tasks/:id", requireAgentKey("all"), async (c) => {
+  app.patch("/api/v1/manager/tasks/:id", requireAgentRole(["manager"]), async (c) => {
     setPrivateResponseHeaders(c);
     return c.json(await updateTask(serviceContext(c), taskId(c.req.param("id")), await parsePatchBody(c)));
   });

@@ -1,5 +1,7 @@
 import type { TaskDto } from "../../../shared/contracts";
+import type { ReaderScope } from "../../shared/authorize";
 import { boolFromDb } from "../../shared/db";
+import { appendReadAccessPredicate } from "../../shared/read-access";
 
 export type TaskRow = {
   id: string;
@@ -15,6 +17,7 @@ export type TaskListScope = {
   agentId?: string;
   done?: boolean;
   excludeArchivedEntries?: boolean;
+  readerAccess?: ReaderScope;
   afterId?: string;
   limit: number;
 };
@@ -72,6 +75,9 @@ export async function listTasks(db: D1Database, scope: TaskListScope): Promise<T
   if (scope.agentId !== undefined) {
     where.push("agent_id = ?");
     bindings.push(scope.agentId);
+  }
+  if (scope.readerAccess !== undefined) {
+    appendReadAccessPredicate("tasks.agent_id", scope.readerAccess, where, bindings);
   }
   if (scope.done !== undefined) {
     where.push("done = ?");

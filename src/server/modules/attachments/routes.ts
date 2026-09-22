@@ -4,8 +4,9 @@ import { serviceContext } from "../../env";
 import { badRequest, forbidden } from "../../shared/errors";
 import { applyPrivateHeaders } from "../../shared/http";
 import {
+  ALL_ROLES,
   requireAdminSession,
-  requireAgentKey,
+  requireAgentRole,
   requireIdentity,
 } from "../auth/middleware";
 import { getAttachmentMedia, uploadAttachment } from "./service";
@@ -29,10 +30,10 @@ function privateResponse(response: Response): Response {
 export function registerAttachmentRoutes(app: Hono<AppEnv>): void {
   app.post(
     "/api/v1/agent/attachments",
-    requireAgentKey("own"),
+    requireAgentRole(["agent"]),
     async (c) => {
       const actor = c.get("actor");
-      if (actor.type !== "agent" || actor.scope !== "own") throw forbidden();
+      if (actor.type !== "agent" || actor.role !== "agent") throw forbidden();
       const attachment = await uploadAttachment(serviceContext(c), actor.agentId, c.req.raw);
       return privateResponse(c.json(attachment, 201));
     },
@@ -40,7 +41,7 @@ export function registerAttachmentRoutes(app: Hono<AppEnv>): void {
 
   app.post(
     "/api/v1/manager/agents/:agentId/attachments",
-    requireAgentKey("all"),
+    requireAgentRole(["manager"]),
     async (c) => {
       const attachment = await uploadAttachment(
         serviceContext(c),
@@ -67,7 +68,7 @@ export function registerAttachmentRoutes(app: Hono<AppEnv>): void {
 
   app.get(
     "/api/v1/media/:id",
-    requireIdentity(),
+    requireIdentity(ALL_ROLES),
     async (c) => getAttachmentMedia(
       serviceContext(c),
       pathId(c.req.param("id"), "附件 ID"),

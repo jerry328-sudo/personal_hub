@@ -159,7 +159,7 @@ function AgentForm({ open, agent, sourceOptions, onClose, onSaved, onIssued }: {
                   : sourceOptions.map((option) => (
                     <label className="checkbox-field" key={option.id}>
                       <input type="checkbox" checked={sources.includes(option.id)} onChange={(event) => toggleSource(option.id, event.target.checked)} />
-                      {option.name}
+                      <span>{option.name}</span>
                     </label>
                   ))}
               </fieldset>
@@ -292,13 +292,13 @@ export function ReadAccessDialog({ agent, sourceOptions, onClose, onSaved }: {
             {sourceOptions.map((option) => (
               <label className="checkbox-field" key={option.id}>
                 <input type="checkbox" checked={sources.includes(option.id)} onChange={(event) => toggleSource(option.id, event.target.checked)} />
-                {option.name}
+                <span>{option.name}</span>
               </label>
             ))}
             {extraGranted.map((id) => (
               <label className="checkbox-field" key={id}>
                 <input type="checkbox" checked onChange={(event) => toggleSource(id, event.target.checked)} />
-                {grantedNames[id] ?? id}（当前不可作为新授权目标）
+                <span>{grantedNames[id] ?? id}（当前不可作为新授权目标）</span>
               </label>
             ))}
           </fieldset>

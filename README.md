@@ -24,6 +24,7 @@ npm run dev
 
 ## 主要能力
 
+- MCP 兼容层：原 API/密钥/网页保持可用，新增 Streamable HTTP `/mcp`，支持已有 Agent Key 和 OAuth 授权。覆盖内容、版本、待办、图片、Agent/密钥/来源授权及登录安全管理；生产已配置独立 KV 并于 2026-09-30 部署。详见 [MCP 接入与部署说明](docs/mcp.md)。
 - Worker 内统一鉴权：管理员 HttpOnly Session、每个普通 Agent 的独立 Bearer Key，以及可跨 Agent 管理消息的总管 Agent。
 - 通行密钥登录：支持 Windows Hello、Android 等 WebAuthn 凭据管理器；在“登录与安全”绑定，退出后仍可使用。管理员密钥作为备用入口，在线修改它会同时撤销所有通行密钥绑定。详见[使用与实现说明](docs/releases/2026-09-18-passkeys.md)。
 - Agent 生命周期和密钥管理：创建、轮换、撤销、停用、移除、恢复及分步清理；明文密钥只显示一次。
@@ -48,6 +49,7 @@ npm run build
 
 ## 文档
 
+- [MCP 接入与部署说明](docs/mcp.md)：密钥/OAuth 两种入口、工具覆盖、权限与撤销、本地开发和生产 KV 配置。
 - [产品与架构设计](docs/design.md)：角色权限、数据模型、接口、状态语义和安全边界。
 - [项目模块与函数设计](docs/module-design.md)：目录结构、模块职责、函数契约、事务边界和测试范围。
 - [只读 Agent 功能规划](docs/readonly-agent-plan.md)：已部署的只读身份、来源授权、角色隔离、授权事务、API、限流与日志边界、管理界面和验收方案；见 [2026-09-22 发布记录](docs/releases/2026-09-22-readonly-agents.md)。

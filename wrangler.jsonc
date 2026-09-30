@@ -3,12 +3,16 @@
   "name": "personal-hub",
   "main": "src/server/index.ts",
   "compatibility_date": "2026-09-18",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "assets": {
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api", "/api/*"]
+    "run_worker_first": ["/api", "/api/*", "/mcp", "/oauth", "/oauth/*", "/.well-known/oauth-*"]
   },
+  "kv_namespaces": [{
+    "binding": "OAUTH_KV",
+    "id": "00000000000000000000000000000000"
+  }],
   "d1_databases": [
     {
       "binding": "DB",
@@ -54,6 +58,10 @@
       "workers_dev": false,
       "routes": [{ "pattern": "personal-hub.echem.ai", "custom_domain": true }],
       "preview_urls": false,
+      "kv_namespaces": [{
+        "binding": "OAUTH_KV",
+        "id": "581727d819cf49fe8c41a70a27fba0cb"
+      }],
       "d1_databases": [{
         "binding": "DB",
         "database_name": "personal-hub-production",

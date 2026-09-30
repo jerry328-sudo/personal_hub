@@ -12,7 +12,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const childEnv = { ...process.env, CLOUDFLARE_ENV: environment };
 
 try {
-  validateRemoteEnvironment(environment);
+  validateRemoteEnvironment(environment, { requireOAuth: true });
 } catch (error) {
   console.error(`拒绝发布：${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);

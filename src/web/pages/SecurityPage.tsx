@@ -43,6 +43,11 @@ export function SecurityPage() {
   return <div className="security-page">
     <header className="security-heading"><button type="button" className="icon-btn" aria-label="打开导航" onClick={openNavigation}><Menu /></button><h1>登录与安全</h1></header>
     <PasskeySettings />
+    <section className="security-card" aria-labelledby="mcp-connections-title">
+      <h2 id="mcp-connections-title">MCP 客户端授权</h2>
+      <p>查看和撤销通过 OAuth 连接的客户端。原有 Agent API 密钥继续在 Agent 管理中维护。</p>
+      <a className="btn" href="/oauth/connections">管理 MCP 连接</a>
+    </section>
     <section className="security-card" aria-labelledby="change-secret-title">
       <h2 id="change-secret-title">修改管理员登录密钥</h2>
       <p>修改后，所有设备上的登录会话及通行密钥绑定都会失效。请使用新密钥登录并重新绑定需要的设备。Agent 密钥不受影响。</p>

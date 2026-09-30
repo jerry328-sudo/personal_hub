@@ -4,6 +4,7 @@ import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useSession } from "../hooks/useSession";
 import { useTheme } from "../hooks/useTheme";
 import { passkeyError, supportsPasskeys } from "../passkeys";
+import { oauthReturnPath } from "../lib/oauth-return";
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -13,8 +14,13 @@ export function LoginPage() {
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const oauthReturn = oauthReturnPath(location.search, window.location.origin);
 
   useEffect(() => () => setSecret(""), []);
+  useEffect(() => {
+    if (session && oauthReturn) window.location.replace(oauthReturn);
+  }, [session, oauthReturn]);
+  if (session && oauthReturn) return <main className="login-page"><p>正在返回 MCP 授权页面…</p></main>;
   if (session) return <Navigate to="/" replace />;
 
   const submit = async (event: FormEvent) => {
@@ -24,6 +30,7 @@ export function LoginPage() {
     try {
       await login(secret);
       setSecret("");
+      if (oauthReturn) { window.location.replace(oauthReturn); return; }
       const from = (location.state as { from?: string } | null)?.from;
       void navigate(from && from.startsWith("/") && !from.startsWith("//") ? from : "/", { replace: true });
     } catch (reason) {
@@ -38,6 +45,7 @@ export function LoginPage() {
     try {
       await loginWithPasskey();
       setSecret("");
+      if (oauthReturn) { window.location.replace(oauthReturn); return; }
       const from = (location.state as { from?: string } | null)?.from;
       void navigate(from && from.startsWith("/") && !from.startsWith("//") ? from : "/", { replace: true });
     } catch (reason) { setError(passkeyError(reason)); }

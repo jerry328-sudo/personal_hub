@@ -6,7 +6,7 @@ function reject(message) {
   throw new Error(message);
 }
 
-export function validateRemoteEnvironment(environment) {
+export function validateRemoteEnvironment(environment, options = {}) {
   const configPath = fileURLToPath(new URL("../wrangler.jsonc", import.meta.url));
   const parseErrors = [];
   const config = parse(readFileSync(configPath, "utf8"), parseErrors, {
@@ -40,6 +40,14 @@ export function validateRemoteEnvironment(environment) {
     : undefined;
   if (!r2 || typeof r2.bucket_name !== "string" || !r2.bucket_name || r2.bucket_name.includes("<")) {
     reject(`env.${environment} 缺少真实的 MEDIA bucket_name`);
+  }
+
+  const oauthKv = Array.isArray(remote.kv_namespaces)
+    ? remote.kv_namespaces.find((binding) => binding?.binding === "OAUTH_KV")
+    : undefined;
+  if (options.requireOAuth && (!oauthKv || typeof oauthKv.id !== "string" || !/^[0-9a-f]{32}$/i.test(oauthKv.id)
+    || oauthKv.id === "00000000000000000000000000000000")) {
+    reject(`env.${environment} 缺少真实的 OAUTH_KV namespace id，请按 docs/mcp.md 配置后再发布`);
   }
 
   const limiter = Array.isArray(remote.ratelimits)

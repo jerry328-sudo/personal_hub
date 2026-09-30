@@ -6,14 +6,15 @@ import {
 } from "@simplewebauthn/server";
 import { isoBase64URL } from "@simplewebauthn/server/helpers";
 import type { PasskeyDto } from "../../../shared/contracts";
-import type { AppContext, AppEnv } from "../../env";
-import { badRequest, conflict, forbidden, notFound, unauthenticated } from "../../shared/errors";
+import { serviceContext, type AppContext, type AppEnv } from "../../env";
+import { badRequest, conflict, forbidden, unauthenticated } from "../../shared/errors";
 import { readLimitedJson, requireSameOrigin } from "../../shared/http";
 import { newEntityId, nowIso } from "../../shared/ids";
 import { generateSecret, verifyAdminLoginHash, verifyAdminSecret } from "./crypto";
 import { requireAdminSession } from "./middleware";
 import { findAdminCredential } from "./repository";
 import { checkLoginRateLimit, createAdminSession } from "./service";
+import { listPasskeys, revokePasskey } from "./passkey-management";
 
 const COOKIE = "__Host-ph_webauthn";
 const TTL = 300;
@@ -88,9 +89,7 @@ async function consumeChallenge(c: AppContext, kind: "register" | "login"): Prom
 
 export function registerPasskeyRoutes(app: Hono<AppEnv>): void {
   app.get("/api/v1/auth/passkeys", requireAdminSession(), async c => {
-    const rows = await c.env.DB.prepare(`SELECT id, name, created_at, last_used_at FROM admin_passkeys
-      WHERE revoked_at IS NULL ORDER BY created_at DESC LIMIT ?`).bind(MAX_KEYS).all<PasskeyDto>();
-    return c.json({ items: rows.results });
+    return c.json(await listPasskeys(serviceContext(c)));
   });
 
   app.post("/api/v1/auth/passkeys/register/options", requireAdminSession(), async c => {
@@ -189,9 +188,7 @@ export function registerPasskeyRoutes(app: Hono<AppEnv>): void {
 
   app.delete("/api/v1/auth/passkeys/:id", requireAdminSession(), async c => {
     origin(c);
-    const key = await c.env.DB.prepare("UPDATE admin_passkeys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL RETURNING id")
-      .bind(nowIso(), c.req.param("id")).first();
-    if (!key) throw notFound("通行密钥不存在或已移除");
+    await revokePasskey(serviceContext(c), c.req.param("id"));
     return c.body(null, 204);
   });
 }

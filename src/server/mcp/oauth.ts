@@ -70,7 +70,7 @@ async function authorize(request: Request, env: OAuthEnv): Promise<Response> {
       ${actor ? `<label>以哪个身份授权<select name="identity"><option value="">请选择身份</option>${choices.filter((a) => a.id !== "manual").map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}（${escapeHtml(a.role)}）</option>`).join("")}<option value="__admin">管理员（可授予管理权限）</option></select></label><small>此处列出前 100 个启用身份；其他身份可使用其 Agent 密钥授权。</small>`
         : `<p><a href="/login?return_to=${encodeURIComponent(returnTo)}">使用现有管理员密钥或通行密钥登录</a>，然后选择授权身份。</p>`}
       <details><summary>使用已有 Agent 密钥授权</summary><label>Agent Key<input type="password" name="agent_key" maxlength="300" autocomplete="off"></label><small>只提交给 Personal Hub，权限不会超出此密钥所属身份。</small></details>
-      <h2>允许访问的范围</h2><small>只读身份只能选择读取；管理权限仅可授予管理员身份。</small>${offered.map((scope) => `<label><input type="checkbox" name="scope" value="${escapeHtml(scope)}" ${scope !== "hub:admin" && requested.includes(scope) ? "checked" : ""}> ${escapeHtml(scopeLabels[scope] ?? scope)}</label>`).join("")}
+      <h2>允许访问的范围</h2><small>只读身份只能选择读取；管理员和总管身份可授予全部管理权限。</small>${offered.map((scope) => `<label><input type="checkbox" name="scope" value="${escapeHtml(scope)}" ${scope !== "hub:admin" && requested.includes(scope) ? "checked" : ""}> ${escapeHtml(scopeLabels[scope] ?? scope)}</label>`).join("")}
       <button name="decision" value="approve">允许连接</button><button name="decision" value="deny">拒绝</button></form>`, consent.headers);
   }
   if (request.method !== "POST") return new Response(null, { status: 405, headers: { Allow: "GET, POST" } });

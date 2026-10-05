@@ -1,5 +1,7 @@
 # MCP 与 OAuth 兼容层
 
+总管完整管理权限已于 2026-10-05 部署并通过线上验证，详见[权限升级记录](releases/2026-10-05-manager-permissions.md)。
+
 本次扩展新增 `/mcp` 和 OAuth 端点，现有网页、API、Agent Key、Session、通行密钥和自动化脚本继续使用原来的入口与权限。MCP 直接调用现有业务服务，条目、版本、待办、附件和身份管理共用原数据库。无新增 D1 迁移；OAuth 协议状态使用独立的 Cloudflare KV。
 
 实现使用 `@modelcontextprotocol/sdk` 的 Web Standards Streamable HTTP transport 和 `@cloudflare/workers-oauth-provider`。每个请求创建独立的 MCP server，采用无状态、JSON 响应模式；不新增 Durable Objects，不保留跨请求的内存身份或会话。
@@ -36,10 +38,10 @@ Authorization: Bearer <已有 Agent Key>
 | --- | --- |
 | `hub:read` | 当前身份允许的读取操作 |
 | `hub:write` | 当前身份允许的内容、待办和上报写入；包含读取 |
-| `hub:admin` | 管理员管理操作，包含读写；仍必须是管理员身份 |
+| `hub:admin` | 全部管理操作，包含读写；须为管理员或启用的总管身份 |
 | `offline_access` | 申请刷新令牌，不赋予业务权限 |
 
-普通/总管只能获授 read/write，只读身份只能获授 read。管理员登录成功不会自动授予管理员操作；授权页中的管理员权限默认不勾选。最终权限同时受 OAuth scope 和数据库中当前角色、状态及来源授权限制。
+普通身份只能获授 read/write，只读身份只能获授 read；管理员和启用的总管可获授 hub:admin。已有总管密钥直接连接即获得全部管理工具，无需换 Key；已有 OAuth 连接仍受原批准范围约束，需重新授权 hub:admin 才能使用全部管理工具。授权页中的管理权限默认不勾选。最终权限同时受 OAuth scope 和数据库中当前角色、状态及来源授权限制。
 
 访问令牌 1 小时有效。批准 offline_access 后允许刷新，授权最长 30 天；刷新不能扩展原授权或切换目标资源。管理员批准的授权使用单独的 30 天 D1 Session，退出原网页登录不会断开 MCP。修改管理员密钥或撤销用于登录的通行密钥会使相关授权失效。使用 Agent Key 直接批准的授权随该 Key 的到期、撤销和身份状态失效。
 
@@ -60,7 +62,7 @@ Authorization: Bearer <已有 Agent Key>
 | 登录安全管理 | `list_passkeys`, `revoke_passkey`, `change_admin_secret` |
 | OAuth 授权管理 | `list_oauth_grants`, `revoke_oauth_grant` |
 
-普通 Agent 的 create_entry/upload_image 自动使用自身归属；总管和管理员须指定 agent_id。总管仍不能删除待办、管理凭据或管理 Agent。永久删除 Agent 可能返回 pending，继续调用至 done。
+普通 Agent 的 create_entry/upload_image 自动使用自身归属；总管和管理员须指定 agent_id。总管可调用全部管理工具，包括删除、Agent/密钥管理、来源授权、通行密钥撤销、管理员登录密钥修改及 OAuth 授权管理。修改登录密钥仍须验证当前登录密钥。总管保持原身份，版本和附件仍记录其 Agent ID。永久删除 Agent 可能返回 pending，继续调用至 done。
 
 MCP 内容参数复用 API 的 Zod 校验与限制。图片以标准 Base64 上传，最大解码大小 10 MiB，文件签名和归属继续由附件服务验证；MCP 请求预算 15 MiB，以容纳图片编码。get_image 返回鉴权后的 MCP image 内容，不公开 R2 对象。工具业务错误使用 isError=true，并保留 error.code/message/details；HTTP 鉴权失败返回 401，reader 限流返回 429。
 

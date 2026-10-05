@@ -134,7 +134,7 @@ function AgentForm({ open, agent, sourceOptions, onClose, onSaved, onIssued }: {
           <label className="field">身份
             <select value={role} onChange={(event) => setRole(event.target.value as AgentRole)}>
               <option value="agent">普通 Agent · 仅管理自身</option>
-              <option value="manager">总管 Agent · 跨来源管理</option>
+              <option value="manager">总管 Agent · 全部管理权限</option>
               <option value="reader">只读 Agent · 只读取授权范围</option>
             </select>
             <small>{isReader ? "只读身份没有内容分区，不能创建、修改或上报任何业务数据。" : "总管是管理身份，不会成为内容分区。"}</small>

@@ -1,5 +1,6 @@
 import type { PurgeProgressDto } from "../../../shared/contracts";
 import type { ServiceContext } from "../../env";
+import { requireManagementActor } from "../../shared/authorize";
 import { conflict, forbidden } from "../../shared/errors";
 import { nowIso } from "../../shared/ids";
 import {
@@ -20,7 +21,7 @@ export interface AgentPurgeDependencies {
 }
 
 function requireAdmin(ctx: ServiceContext): void {
-  if (ctx.actor.type !== "admin") throw forbidden("只有管理员可以永久删除 Agent");
+  requireManagementActor(ctx.actor);
 }
 
 export async function beginAgentPurge(ctx: ServiceContext, agentId: string): Promise<boolean> {

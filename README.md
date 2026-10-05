@@ -1,5 +1,7 @@
 # Personal Hub
 
+总管完整管理权限升级已于 2026-10-05 部署并通过线上验证，现有总管 Key 无需更换，见[权限升级记录](docs/releases/2026-10-05-manager-permissions.md)。
+
 已发布：自定义域名 `personal-hub.echem.ai`、普通/总管 Agent 无限期密钥、管理员在线修改登录密钥和网站图标。详见[更新发布记录](docs/releases/pending-domain-auth.md)。Agent 密钥仍仅展示一次；在线更换管理员密钥后旧会话全部失效。
 
 Personal Hub 是一个运行在 Cloudflare Workers 上的个人信息中心。外部 Agent 通过独立密钥提交和更新信息，管理员在网页中统一查看条目、历史版本、私有图片、待办与完成状态。
@@ -25,7 +27,7 @@ npm run dev
 ## 主要能力
 
 - MCP 兼容层：原 API/密钥/网页保持可用，新增 Streamable HTTP `/mcp`，支持已有 Agent Key 和 OAuth 授权。覆盖内容、版本、待办、图片、Agent/密钥/来源授权及登录安全管理；生产已配置独立 KV 并于 2026-09-30 部署。详见 [MCP 接入与部署说明](docs/mcp.md)。
-- Worker 内统一鉴权：管理员 HttpOnly Session、每个普通 Agent 的独立 Bearer Key，以及可跨 Agent 管理消息的总管 Agent。
+- Worker 内统一鉴权：管理员 HttpOnly Session、每个普通 Agent 的独立 Bearer Key，以及拥有全部 API/MCP 管理权限的总管 Agent。现有总管 Key 无需更换；OAuth 连接须显式批准 hub:admin。
 - 通行密钥登录：支持 Windows Hello、Android 等 WebAuthn 凭据管理器；在“登录与安全”绑定，退出后仍可使用。管理员密钥作为备用入口，在线修改它会同时撤销所有通行密钥绑定。详见[使用与实现说明](docs/releases/2026-09-18-passkeys.md)。
 - Agent 生命周期和密钥管理：创建、轮换、撤销、停用、移除、恢复及分步清理；明文密钥只显示一次。
 - 条目与版本：分页筛选、完整历史、基于 `base_version` 的并发更新、已读、归档和手动完成状态。

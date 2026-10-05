@@ -240,15 +240,64 @@ describe("OAuth authorization and live permission checks", () => {
     }
     expect(value<{ status: string }>(await tool(admin, "purge_agent", { id: created.agent.id })).status).toBe("done");
   });
-  it("preserves manager restrictions while supporting cross-source content and tasks", async () => {
+  it("gives existing manager keys all management tools while preserving their actor identity", async () => {
     const cookie = await login(); const source = await agent(cookie); const manager = await agent(cookie, { role: "manager" });
     const names = (await rpc(manager.key.secret, "tools/list")).result!.tools!.map((t) => t.name);
-    expect(names).toContain("append_entry_version"); expect(names).not.toContain("delete_task"); expect(names).not.toContain("issue_agent_key");
+    for (const name of ["append_entry_version", "delete_task", "issue_agent_key", "create_agent", "purge_agent",
+      "update_entry_state", "mark_entries_read", "delete_entry", "set_read_access", "list_passkeys",
+      "change_admin_secret", "list_oauth_grants", "revoke_oauth_grant"]) expect(names).toContain(name);
+    expect(value<{ role: string; agent_id: string; scopes: string[] }>(await tool(manager.key.secret, "get_identity")))
+      .toMatchObject({ role: "manager", agent_id: manager.agent.id, scopes: ["hub:read", "hub:write", "hub:admin"] });
     const entry = value<{ id: string }>(await tool(manager.key.secret, "create_entry", { agent_id: source.agent.id, entry: { title: "Managed", content: "content" } }));
     expect(value<{ id: string }>(await tool(source.key.secret, "get_entry", { id: entry.id })).id).toBe(entry.id);
     const task = value<{ id: string }>(await tool(manager.key.secret, "create_task", { agent_id: source.agent.id, title: "Task" }));
     expect((await tool(manager.key.secret, "update_task", { id: task.id, task: { done: true } })).result?.isError).not.toBe(true);
     expect((await tool(manager.key.secret, "report_run", { result: "success", note: "MCP checked" })).result?.isError).not.toBe(true);
+    expect(value<{ items: { id: string }[] }>(await tool(manager.key.secret, "list_agents", { scope: "all" })).items)
+      .toContainEqual(expect.objectContaining({ id: manager.agent.id }));
+    const current = value<{ created_by_agent_id: string }>(await tool(manager.key.secret, "get_entry", { id: entry.id }));
+    expect(current.created_by_agent_id).toBe(manager.agent.id);
+    expect(value<{ archived: boolean }>(await tool(manager.key.secret, "update_entry_state", { id: entry.id, state: { archived: true } })).archived).toBe(true);
+    expect(value<{ updated: number }>(await tool(manager.key.secret, "mark_entries_read", { agent_id: source.agent.id })).updated).toBe(1);
+    const created = value<Created>(await tool(manager.key.secret, "create_agent", { name: "Manager created" }));
+    const issued = value<IssuedKeyDto>(await tool(manager.key.secret, "issue_agent_key", { id: created.agent.id, key: {} }));
+    expect((await tool(manager.key.secret, "revoke_agent_key", { id: created.agent.id, key_id: issued.id })).result?.isError).not.toBe(true);
+    const reader = value<Created>(await tool(manager.key.secret, "create_agent", { name: "Manager reader", role: "reader", read_access: { mode: "all" } }));
+    expect((await tool(manager.key.secret, "set_read_access", { id: reader.agent.id, access: { base_revision: 0, mode: "selected", agent_ids: [source.agent.id] } })).result?.isError).not.toBe(true);
+    expect((await tool(manager.key.secret, "delete_task", { id: task.id })).result?.isError).not.toBe(true);
+    expect((await tool(manager.key.secret, "delete_entry", { id: entry.id })).result?.isError).not.toBe(true);
+    const image = await tool(manager.key.secret, "upload_image", { agent_id: created.agent.id, filename: "manager.png", content_type: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" });
+    expect(image.result?.isError).not.toBe(true);
+    expect(value<{ status: string }>(await tool(manager.key.secret, "purge_agent", { id: created.agent.id })).status).toBe("done");
+    expect((await tool(manager.key.secret, "list_passkeys")).result?.isError).not.toBe(true);
+    expect((await tool(manager.key.secret, "list_oauth_grants")).result?.isError).not.toBe(true);
+    expect((await tool(manager.key.secret, "set_agent_status", { id: manager.agent.id, action: "disable" })).result?.isError).not.toBe(true);
+    const denied = await request("/mcp", json("POST", { jsonrpc: "2.0", id: 1, method: "tools/list" }, {
+      Authorization: `Bearer ${manager.key.secret}`, Accept: "application/json, text/event-stream" }));
+    expect(denied.status).toBe(401);
+  });
+  it("requires explicit manager OAuth admin consent and invalidates it when the manager key is revoked", async () => {
+    const cookie = await login(); const manager = await agent(cookie, { role: "manager" });
+    const limited = await authorize(cookie, manager.agent.id, ["hub:read", "hub:write", "offline_access"]);
+    const limitedNames = (await rpc(limited.access_token, "tools/list")).result!.tools!.map((t) => t.name);
+    expect(limitedNames).toContain("create_entry"); expect(limitedNames).not.toContain("create_agent");
+    expect((await tool(limited.access_token, "create_agent", { name: "Denied without consent" })).result?.isError).toBe(true);
+    const full = await authorize("", "", ["hub:admin", "offline_access"], manager.key.secret);
+    const created = value<Created>(await tool(full.access_token, "create_agent", { name: "OAuth manager created" }));
+    expect(created.agent.id).toBeTruthy();
+    const grants = value<{ items: { id: string }[] }>(await tool(full.access_token, "list_oauth_grants", { user_id: `agent_${manager.agent.id}` }));
+    expect(grants.items).toHaveLength(2);
+    // Revoke the limited grant through the full manager connection.
+    const fullGrants = value<{ items: { id: string; scope: string[] }[] }>(await tool(full.access_token, "list_oauth_grants", { user_id: `agent_${manager.agent.id}` }));
+    const limitedGrant = fullGrants.items.find((grant) => !grant.scope.includes("hub:admin"))!;
+    expect((await tool(full.access_token, "revoke_oauth_grant", { user_id: `agent_${manager.agent.id}`, grant_id: limitedGrant.id })).result?.isError).not.toBe(true);
+    expect((await tool(full.access_token, "revoke_agent_key", { id: manager.agent.id, key_id: manager.key.id })).result?.isError).not.toBe(true);
+    const denied = await request("/mcp", json("POST", { jsonrpc: "2.0", id: 1, method: "tools/list" }, {
+      Authorization: `Bearer ${full.access_token}`, Accept: "application/json, text/event-stream" }));
+    expect(denied.status).toBe(401);
+    const refresh = await request("/oauth/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "refresh_token", client_id: full.clientId, refresh_token: full.refresh_token!, resource: `${origin}/mcp` }) });
+    expect(refresh.status).toBe(400);
   });
   it("does not resurrect delegated OAuth access after removing and restoring an Agent", async () => {
     const cookie = await login(); const source = await agent(cookie);

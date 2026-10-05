@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from "hono";
-import type { AppEnv } from "../env";
+import type { Actor, AppEnv } from "../env";
+import { requireManagementActor } from "./authorize";
 import { badRequest, forbidden, payloadTooLarge } from "./errors";
 
 export function createRequestId(): string {
@@ -23,6 +24,14 @@ export function applyPrivateHeaders(headers: Headers): void {
 export function requireSameOrigin(request: Request, expectedOrigin: string): void {
   const origin = request.headers.get("Origin");
   if (!origin || origin !== expectedOrigin) throw forbidden("写操作必须来自本站页面");
+}
+
+/** Cookie 管理写入仍要求同源；总管 Bearer 调用允许无 Origin，拒绝异源。 */
+export function requireManagementWriteOrigin(request: Request, expectedOrigin: string, actor: Actor): void {
+  requireManagementActor(actor);
+  if (actor.type === "admin" || request.headers.has("Origin")) {
+    requireSameOrigin(request, expectedOrigin);
+  }
 }
 
 export async function readLimitedJson(request: Request, maxBytes: number): Promise<unknown> {

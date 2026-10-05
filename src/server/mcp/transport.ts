@@ -25,6 +25,7 @@ export async function handleMcp(request: Request, env: OAuthEnv, execution: Exec
     const auth = z.object({ scope: z.array(z.string()) }).passthrough().parse(execution.auth);
     scopes = auth.scope;
   }
+  if (actor.type === "agent" && actor.role === "manager" && actor.status !== "active") throw unauthenticated("总管身份已停用");
   const requestId = crypto.randomUUID();
   let status = 500; let code = "internal_error";
   let server: ReturnType<typeof createMcpServer> | undefined;

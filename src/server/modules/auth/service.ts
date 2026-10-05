@@ -14,6 +14,7 @@ import {
   unauthenticated,
 } from "../../shared/errors";
 import { newEntityId, nowIso } from "../../shared/ids";
+import { requireManagementActor } from "../../shared/authorize";
 import {
   buildSessionCookie,
   clearSessionCookie,
@@ -344,7 +345,7 @@ export async function logoutAdmin(ctx: ServiceContext): Promise<string> {
 export async function changeAdminSecret(
   ctx: ServiceContext, request: Request, input: ChangeAdminSecretInput,
 ): Promise<string> {
-  requireAdminActor(ctx);
+  requireManagementActor(ctx.actor);
   await checkLoginRateLimit(ctx.env, request);
   const credential = await findAdminCredential(ctx.env.DB);
   const valid = credential.secret_hash === null
@@ -355,7 +356,7 @@ export async function changeAdminSecret(
     throw badRequest("新密钥需为 32–1024 个字符，且不能与旧密钥相同");
   }
   const digest = await hashAdminLoginSecret(input.new_secret, ctx.env.AUTH_PEPPER);
-  const changed = await rotateAdminCredential(ctx.env.DB, ctx.actor.sessionId, credential.revision, digest, nowIso());
+  const changed = await rotateAdminCredential(ctx.env.DB, ctx.actor, credential.revision, digest, nowIso());
   if (!changed) throw conflict("凭据或会话已变更，请重新登录");
   return clearSessionCookie();
 }
@@ -395,7 +396,7 @@ export async function issueAgentKey(
   agentId: string,
   input: IssueKeyInput,
 ): Promise<IssuedKeyDto> {
-  requireAdminActor(ctx);
+  requireManagementActor(ctx.actor);
   const target = await findAgentKeyTarget(ctx.env.DB, agentId);
   requireUsableKeyTarget(target);
 
@@ -409,7 +410,7 @@ export async function listAgentKeys(
   ctx: ServiceContext,
   agentId: string,
 ): Promise<AgentKeyMetadataDto[]> {
-  requireAdminActor(ctx);
+  requireManagementActor(ctx.actor);
   const target = await findAgentKeyTarget(ctx.env.DB, agentId);
   if (!target) throw notFound("Agent 不存在");
   return listKeyMetadata(ctx.env.DB, agentId);
@@ -420,7 +421,7 @@ export async function revokeAgentKey(
   agentId: string,
   keyId: string,
 ): Promise<void> {
-  requireAdminActor(ctx);
+  requireManagementActor(ctx.actor);
   const keys = await listAgentKeys(ctx, agentId);
   const key = keys.find((item) => item.id === keyId);
   if (!key) throw notFound("密钥不存在");

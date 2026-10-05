@@ -25,6 +25,17 @@ export function requireAdminActor(actor: Actor): asserts actor is Extract<Actor,
   if (actor.type !== "admin") throw forbidden();
 }
 
+export type ManagementActor = Extract<Actor, { type: "admin" }> | ManagerActor;
+
+/** 总管保留密钥身份和操作归属，同时拥有全部管理权限。 */
+export function isManagementActor(actor: Actor): actor is ManagementActor {
+  return actor.type === "admin" || (actor.role === "manager" && actor.status === "active");
+}
+
+export function requireManagementActor(actor: Actor): asserts actor is ManagementActor {
+  if (!isManagementActor(actor)) throw forbidden("此操作需要管理员或启用的总管身份");
+}
+
 export function requireOwnAgentActor(actor: Actor): asserts actor is OwnAgentActor {
   if (actor.type !== "agent" || actor.role !== "agent") throw forbidden();
   if (actor.status !== "active") throw forbidden("此 Agent 当前未启用");

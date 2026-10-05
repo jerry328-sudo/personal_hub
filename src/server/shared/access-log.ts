@@ -41,6 +41,7 @@ export function recordReaderAccess(input: ReaderAccessLogInput): void {
 }
 
 export type ReaderAccessChangeInput = {
+  actor: string;
   requestId: string;
   readerAgentId: string;
   previousRevision: number | null;
@@ -54,7 +55,7 @@ export function recordReaderAccessChange(input: ReaderAccessChangeInput): void {
   console.log(JSON.stringify({
     event: "reader_access_change",
     at: new Date().toISOString(),
-    actor: "admin",
+    actor: input.actor,
     request_id: input.requestId,
     reader_agent_id: input.readerAgentId,
     previous_revision: input.previousRevision,

@@ -5,6 +5,7 @@ import { findKeyWithAgent, findSession, insertSession } from "../modules/auth/re
 import { generateSecret, hashCredential } from "../modules/auth/crypto";
 import { newEntityId, nowIso } from "../shared/ids";
 import { unauthenticated } from "../shared/errors";
+import { isManagementActor } from "../shared/authorize";
 
 export const principalSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("key"), keyId: z.string() }).strict(),
@@ -16,7 +17,7 @@ export const MCP_SCOPES = ["hub:read", "hub:write", "hub:admin"] as const;
 export type McpScope = typeof MCP_SCOPES[number];
 
 export function scopesFor(actor: Actor): McpScope[] {
-  if (actor.type === "admin") return [...MCP_SCOPES];
+  if (isManagementActor(actor)) return [...MCP_SCOPES];
   return actor.role === "reader" ? ["hub:read"] : ["hub:read", "hub:write"];
 }
 export function scopeAllows(scopes: readonly string[], scope: McpScope): boolean {

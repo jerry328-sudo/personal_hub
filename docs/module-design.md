@@ -176,6 +176,8 @@ Actor 是服务器内部判别联合类型：
 
 authorize.ts：
 - `requireAdminActor(actor)`：仅网页管理员。
+- `requireManagementActor(actor)`：管理员或启用的总管；全部管理业务共用此检查，不将总管伪装为网页管理员。
+- `requireManagementWriteOrigin(request, origin, actor)`：Cookie 写请求须同源；总管 Bearer 可无 Origin，拒绝异源。
 - `requireOwnAgentActor(actor)`：仅 `scope=own` 的机器身份。
 - `requireManagerActor(actor)`：仅 `scope=all` 且启用的总管。
 - `resolveReadScope(actor, requestedAgentId?)` → `{ kind: "own", agentId }` 或 `{ kind: "all", agentId? }`。
@@ -183,7 +185,7 @@ authorize.ts：
 - `assertCanWriteOwner(actor, ownerId)`：先验证角色和 owner 范围；service 与条件 SQL 再检查目标生命周期。
 - `createdByActor(actor)`：管理员返回 `manual`，Agent 返回自身编号，供版本和附件记录操作者。
 
-路由拒绝角色不符返回 403。普通 Agent 按 ID 查询自己的资源时，用含 owner 的 SQL；不存在与越权统一返回 404，避免先查出其他人的对象再泄漏存在性。跨 Agent 管理不意味着可管理凭据或会话。
+路由拒绝角色不符返回 403。普通 Agent 按 ID 查询自己的资源时，用含 owner 的 SQL；不存在与越权统一返回 404。总管可管理凭据，但其密钥不转换为管理员网页会话；版本、附件和来源授权日志保留总管操作者编号。
 
 ## 5. 认证模块 auth
 
@@ -195,7 +197,7 @@ routes.ts 注册下表入口；service 负责会话和密钥策略，crypto 不�
 | GET /api/v1/auth/session | getAdminSession(ctx) | 当前会话信息；无会话 401 |
 | POST /api/v1/auth/logout | logoutAdmin(ctx) | 撤销当前 Session 并清 Cookie |
 | POST /api/v1/auth/change-secret | changeAdminSecret(ctx, request, input) | 校验当前密钥、同源和限流；原子更新摘要与版本，撤销全部旧 Session |
-| POST /api/v1/admin/agents/:id/keys | issueAgentKey(ctx, agentId, input) | 仅管理员；返回一次明文，禁止超出有效密钥数量 |
+| POST /api/v1/admin/agents/:id/keys | issueAgentKey(ctx, agentId, input) | 管理员或启用的总管；返回一次明文，禁止超出有效密钥数量 |
 | GET /api/v1/admin/agents/:id/keys | listAgentKeys(ctx, agentId) | 仅元数据，无摘要/明文 |
 | DELETE /api/v1/admin/agents/:id/keys/:keyId | revokeAgentKey(ctx, agentId, keyId) | 目标归属匹配，幂等撤销 |
 
@@ -272,8 +274,8 @@ lifecycle.ts：beginAgentPurge、purgeAgentStep、finalizeAgentPurge。该文件
 | appendEntryVersion(ctx, entryId, input) | 完整快照+base_version → {id, version} | 条件写入，冲突 409，保留处理状态 |
 | listEntryVersions(ctx, entryId, page) | ID → 历史目录分页 | 目录不批量返回历史正文 |
 | getEntryVersion(ctx, entryId, version) | ID/版号 → EntryVersionDto | 历史快照和当前状态明确分离 |
-| updateEntryState(ctx, entryId, input) | 状态补丁 → EntryStateDto | 仅管理员，不产生版本 |
-| deleteEntry(ctx, entryId) | ID → void | 仅管理员；删整条及版本，保留待办并解除来源 |
+| updateEntryState(ctx, entryId, input) | 状态补丁 → EntryStateDto | 管理员或启用的总管，不产生版本 |
+| deleteEntry(ctx, entryId) | ID → void | 管理员或启用的总管；删整条及版本，保留待办并解除来源 |
 
 repository.ts：
 - listCurrentEntries(db, scope, query)、findCurrentEntry(db, scope, id)：集合查询最新版本，避免 N+1。

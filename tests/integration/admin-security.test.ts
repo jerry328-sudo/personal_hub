@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import app from "../../src/server/app";
 import { generateSecret, formatSessionToken, hashAdminLoginSecret, hashCredential } from "../../src/server/modules/auth/crypto";
 import { insertSession, rotateAdminCredential } from "../../src/server/modules/auth/repository";
+import { authenticateBearer } from "../../src/server/modules/auth/service";
 
 const origin = "http://localhost:5173";
 const initial = "test-admin-secret-with-sufficient-entropy";
@@ -31,6 +32,35 @@ beforeEach(async () => {
 });
 
 describe("online administrator credential rotation", () => {
+  it("lets managers rotate login credentials and revoke passkeys while rejecting stale manager keys in the transaction", async () => {
+    const cookie = await login();
+    await env.DB.prepare("UPDATE agents SET status = 'disabled' WHERE scope = 'all' AND access_mode = 'read_write' AND status = 'active'").run();
+    const response = await call("/api/v1/admin/agents", "POST", cookie, { name: "Credential manager", role: "manager" });
+    expect(response.status).toBe(201);
+    const manager = await response.json<{ agent: { id: string }; key: { id: string; secret: string } }>();
+    const headers = { Authorization: `Bearer ${manager.key.secret}` };
+    const id = `manager-passkey-${crypto.randomUUID()}`;
+    await env.DB.prepare(`INSERT INTO admin_passkeys (id, credential_id, public_key, user_handle, counter, credential_revision, name, created_at)
+      VALUES (?, ?, 'test-public-key', 'test-user', 0, 0, 'Manager metadata test', ?)`)
+      .bind(id, `credential-${id}`, new Date().toISOString()).run();
+    expect((await call(`/api/v1/auth/passkeys/${id}`, "DELETE", undefined, undefined, headers)).status).toBe(204);
+    const body = { current_secret: initial, new_secret: next };
+    expect((await call("/api/v1/auth/change-secret", "POST", undefined, { ...body, current_secret: "wrong" }, headers)).status).toBe(403);
+    // Direct API keys work without a browser Origin, while session writes still require it.
+    const changed = await app.request(origin + "/api/v1/auth/change-secret", {
+      method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(body),
+    }, env);
+    expect(changed.status).toBe(204);
+    expect((await call("/api/v1/auth/session", "GET", cookie)).status).toBe(401);
+    expect((await call("/api/v1/admin/agents", "GET", undefined, undefined, headers)).status).toBe(200);
+    await login(next);
+    const actor = await authenticateBearer(env, manager.key.secret);
+    if (actor.role !== "manager") throw new Error("Expected manager");
+    await env.DB.prepare("UPDATE agent_keys SET revoked_at = ? WHERE id = ?").bind(new Date().toISOString(), manager.key.id).run();
+    const digest = await hashAdminLoginSecret(initial, env.AUTH_PEPPER);
+    expect(await rotateAdminCredential(env.DB, actor, 1, digest, new Date().toISOString())).toBe(false);
+    await login(next);
+  });
   it("requires a session, same origin, correct old secret and a sufficiently long new secret", async () => {
     const body = { current_secret: initial, new_secret: next };
     expect((await call("/api/v1/auth/change-secret", "POST", undefined, body)).status).toBe(401);
@@ -68,11 +98,11 @@ describe("online administrator credential rotation", () => {
     const session = await env.DB.prepare("SELECT id FROM admin_sessions LIMIT 1").first<{ id: string }>();
     const digest = await hashAdminLoginSecret(next, env.AUTH_PEPPER);
     const now = new Date().toISOString();
-    expect(await rotateAdminCredential(env.DB, session!.id, 0, digest, now)).toBe(true);
+    expect(await rotateAdminCredential(env.DB, { type: "admin", sessionId: session!.id }, 0, digest, now)).toBe(true);
     await expect(insertSession(env.DB, { id: "stale-login", tokenHash: "unused", createdAt: now,
       expiresAt: "2099-01-01T00:00:00.000Z", credentialRevision: 0 })).rejects.toThrow("登录密钥已变更");
     const fresh = await login(next);
-    expect(await rotateAdminCredential(env.DB, session!.id, 0, digest, now)).toBe(false);
+    expect(await rotateAdminCredential(env.DB, { type: "admin", sessionId: session!.id }, 0, digest, now)).toBe(false);
     expect((await call("/api/v1/auth/session", "GET", fresh)).status).toBe(200);
   });
 
@@ -81,7 +111,7 @@ describe("online administrator credential rotation", () => {
     const session = await env.DB.prepare("SELECT id FROM admin_sessions LIMIT 1").first<{ id: string }>();
     expect((await call("/api/v1/auth/logout", "POST", cookie)).status).toBe(204);
     const digest = await hashAdminLoginSecret(next, env.AUTH_PEPPER);
-    expect(await rotateAdminCredential(env.DB, session!.id, 0, digest, new Date().toISOString())).toBe(false);
+    expect(await rotateAdminCredential(env.DB, { type: "admin", sessionId: session!.id }, 0, digest, new Date().toISOString())).toBe(false);
     await login();
   });
 

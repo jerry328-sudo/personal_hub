@@ -10,6 +10,7 @@ import type {
   UpdateAgentInput,
 } from "../../../shared/contracts";
 import { LIMITS } from "../../../shared/limits";
+import { requireManagementActor } from "../../shared/authorize";
 import type { ServiceContext } from "../../env";
 import { isUniqueConstraintError } from "../../shared/db";
 import { badRequest, conflict, forbidden, notFound } from "../../shared/errors";
@@ -48,7 +49,7 @@ export interface CreateAgentResult {
 }
 
 function requireAdmin(ctx: ServiceContext): void {
-  if (ctx.actor.type !== "admin") throw forbidden("只有管理员可以管理 Agent");
+  requireManagementActor(ctx.actor);
 }
 
 /** 只读身份不能通过这里读写业务身份信息，即使路由层漏写角色名单。 */

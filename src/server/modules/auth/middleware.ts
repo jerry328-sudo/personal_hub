@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 import type { Actor, AppContext, AppEnv } from "../../env";
 import { forbidden, unauthenticated } from "../../shared/errors";
+import { requireManagementActor } from "../../shared/authorize";
 import {
   actorHasRole,
   authenticateRequest,
@@ -84,6 +85,16 @@ export function requireReaderPathAccess(): MiddlewareHandler<AppEnv> {
 
 export function requireAdminSession(): MiddlewareHandler<AppEnv> {
   return requireIdentity(["admin"]);
+}
+
+export function requireManagementAccess(): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    const actor = await resolveActor(c);
+    if (!actor) throw unauthenticated();
+    c.set("actor", actor);
+    requireManagementActor(actor);
+    await next();
+  };
 }
 
 /** 普通 Agent 或总管 Agent，需要显式声明。 */

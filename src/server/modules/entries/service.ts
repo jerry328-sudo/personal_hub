@@ -16,7 +16,7 @@ import {
   assertCanWriteOwner,
   createdByActor,
   readerScopeOf,
-  requireAdminActor,
+  requireManagementActor,
   requireManagerActor,
   requireOwnAgentActor,
   requireReaderActor,
@@ -73,7 +73,7 @@ function assertAudience(actor: Actor, audience: EntryAudience): void {
   if (audience === "agent") requireOwnAgentActor(actor);
   else if (audience === "manager") requireManagerActor(actor);
   else if (audience === "reader") requireReaderActor(actor);
-  else requireAdminActor(actor);
+  else requireManagementActor(actor);
 }
 
 function assertActiveEntryReader(actor: Actor): void {
@@ -223,7 +223,7 @@ export async function getEntry(ctx: ServiceContext, entryId: string): Promise<En
 }
 
 export async function markEntriesRead(ctx: ServiceContext, filters: EntryQuery): Promise<{ updated: number }> {
-  requireAdminActor(ctx.actor);
+  requireManagementActor(ctx.actor);
   const { query } = normalizeEntryQuery(ctx.actor, filters, "admin");
   return { updated: await markMatchingEntriesRead(ctx.env.DB, resolveReadScope(ctx.actor, filters.agent_id), query) };
 }
@@ -349,7 +349,7 @@ export async function updateEntryState(
   entryId: string,
   input: PatchEntryStateInput,
 ): Promise<EntryStateDto> {
-  requireAdminActor(ctx.actor);
+  requireManagementActor(ctx.actor);
   if (input.read_version !== undefined) {
     const currentVersion = await findCurrentVersionNumber(ctx.env.DB, entryId);
     if (currentVersion === null) throw notFound("条目不存在");
@@ -373,7 +373,7 @@ export async function updateEntryState(
 }
 
 export async function deleteEntry(ctx: ServiceContext, entryId: string): Promise<void> {
-  requireAdminActor(ctx.actor);
+  requireManagementActor(ctx.actor);
   const state = await findEntryState(ctx.env.DB, entryId);
   if (!state) throw notFound("条目不存在");
   const deleted = await deleteEntryBatch(ctx.env.DB, entryId);

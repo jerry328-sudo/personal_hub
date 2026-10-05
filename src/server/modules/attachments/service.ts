@@ -2,6 +2,7 @@ import type { AttachmentDto, PurgeProgressDto } from "../../../shared/contracts"
 import { attachmentIdFromUrl } from "../../../shared/markdown";
 import type { Actor, ServiceContext } from "../../env";
 import {
+  requireManagementActor,
   requireManagerActor,
   requireOwnAgentActor,
   resolveReaderReadScope,
@@ -349,7 +350,7 @@ export async function purgeAgentAttachmentsStep(
   agentId: string,
   limit: number,
 ): Promise<PurgeProgressDto> {
-  if (ctx.actor.type !== "admin") throw forbidden();
+  requireManagementActor(ctx.actor);
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
     throw badRequest("单次附件清理数量必须在 1 到 100 之间");
   }

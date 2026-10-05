@@ -12,9 +12,9 @@ import {
   type EntryQuery,
 } from "../../../shared/validation";
 import { serviceContext, type AppEnv } from "../../env";
-import { requireAdminActor, requireManagerActor, requireOwnAgentActor, requireReaderActor } from "../../shared/authorize";
+import { requireManagementActor, requireManagerActor, requireOwnAgentActor, requireReaderActor } from "../../shared/authorize";
 import { badRequest } from "../../shared/errors";
-import { readLimitedJson, requireSameOrigin } from "../../shared/http";
+import { readLimitedJson, requireManagementWriteOrigin } from "../../shared/http";
 import {
   appendEntryVersion,
   createEntry,
@@ -72,7 +72,7 @@ function assertAudience(c: Context<AppEnv>, audience: EntryAudience): void {
   if (audience === "agent") requireOwnAgentActor(actor);
   else if (audience === "manager") requireManagerActor(actor);
   else if (audience === "reader") requireReaderActor(actor);
-  else requireAdminActor(actor);
+  else requireManagementActor(actor);
 }
 
 function privateResponse(c: Context<AppEnv>): void {
@@ -102,7 +102,7 @@ function appendHandler(audience: EntryAudience): Handler<AppEnv> {
   return async (c) => {
     privateResponse(c);
     assertAudience(c, audience);
-    if (audience === "admin") requireSameOrigin(c.req.raw, c.env.APP_ORIGIN);
+    if (audience === "admin") requireManagementWriteOrigin(c.req.raw, c.env.APP_ORIGIN, c.get("actor"));
     const input = await parseJson<AppendVersionInput>(c, appendVersionSchema);
     const result = await appendEntryVersion(
       serviceContext(c),
@@ -171,21 +171,21 @@ export function registerEntryRoutes(app: Hono<AppEnv>): void {
   app.get("/api/v1/admin/entries", listHandler("admin"));
   app.get("/api/v1/admin/entries/counts", async (c) => {
     privateResponse(c);
-    requireAdminActor(c.get("actor"));
+    requireManagementActor(c.get("actor"));
     return c.json(await entryCounts(c.env.DB));
   });
   app.post("/api/v1/admin/entries/read", async (c) => {
     privateResponse(c);
-    requireAdminActor(c.get("actor"));
-    requireSameOrigin(c.req.raw, c.env.APP_ORIGIN);
+    requireManagementActor(c.get("actor"));
+    requireManagementWriteOrigin(c.req.raw, c.env.APP_ORIGIN, c.get("actor"));
     const filters = await parseJson(c, markReadQuerySchema);
     return c.json(await markEntriesRead(serviceContext(c), filters));
   });
   app.get("/api/v1/admin/entries/:id", detailHandler("admin"));
   app.post("/api/v1/admin/agents/:agentId/entries", async (c) => {
     privateResponse(c);
-    requireAdminActor(c.get("actor"));
-    requireSameOrigin(c.req.raw, c.env.APP_ORIGIN);
+    requireManagementActor(c.get("actor"));
+    requireManagementWriteOrigin(c.req.raw, c.env.APP_ORIGIN, c.get("actor"));
     const input = await parseJson<CreateEntryInput>(c, createEntrySchema);
     return c.json(await createEntry(
       serviceContext(c),
@@ -198,8 +198,8 @@ export function registerEntryRoutes(app: Hono<AppEnv>): void {
   app.get("/api/v1/admin/entries/:id/versions/:version", versionDetailHandler("admin"));
   app.patch("/api/v1/admin/entries/:id/state", async (c) => {
     privateResponse(c);
-    requireAdminActor(c.get("actor"));
-    requireSameOrigin(c.req.raw, c.env.APP_ORIGIN);
+    requireManagementActor(c.get("actor"));
+    requireManagementWriteOrigin(c.req.raw, c.env.APP_ORIGIN, c.get("actor"));
     const input = await parseJson<PatchEntryStateInput>(c, patchEntryStateSchema);
     return c.json(await updateEntryState(
       serviceContext(c),
@@ -209,8 +209,8 @@ export function registerEntryRoutes(app: Hono<AppEnv>): void {
   });
   app.delete("/api/v1/admin/entries/:id", async (c) => {
     privateResponse(c);
-    requireAdminActor(c.get("actor"));
-    requireSameOrigin(c.req.raw, c.env.APP_ORIGIN);
+    requireManagementActor(c.get("actor"));
+    requireManagementWriteOrigin(c.req.raw, c.env.APP_ORIGIN, c.get("actor"));
     await deleteEntry(serviceContext(c), parseId(c.req.param("id"), "条目编号"));
     return c.body(null, 204);
   });

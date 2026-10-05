@@ -10,7 +10,8 @@ import type { ServiceContext } from "../../env";
 import {
   assertCanWriteOwner,
   readerScopeOf,
-  requireAdminActor,
+  isManagementActor,
+  requireManagementActor,
   requireManagerActor,
   requireOwnAgentActor,
   requireReaderActor,
@@ -158,7 +159,7 @@ export async function createTask(ctx: ServiceContext, input: CreateTaskInput): P
     title: input.title,
     dueAt: input.due_at ?? null,
     createdAt: nowIso(),
-  }, ctx.actor.type === "admin");
+  }, isManagementActor(ctx.actor));
   if (!row) {
     throw conflict("目标 Agent 或关联条目的状态已变化，请刷新后重试");
   }
@@ -187,26 +188,23 @@ export async function updateTask(
     ...(input.title === undefined ? {} : { title: input.title }),
     ...(input.due_at === undefined ? {} : { dueAt: input.due_at }),
     ...(input.done === undefined ? {} : { done: input.done }),
-  }, ctx.actor.type === "admin" ? "not_deleting" : "active");
+  }, isManagementActor(ctx.actor) ? "not_deleting" : "active");
   if (!row) throw conflict("待办或所属 Agent 的状态已变化，请刷新后重试");
   return taskDto(row);
 }
 
 export async function deleteTask(ctx: ServiceContext, id: string): Promise<void> {
-  if (ctx.actor.type === "agent" && ctx.actor.role === "manager") {
-    throw forbidden("总管 Agent 不能删除待办");
-  }
-  if (ctx.actor.type === "admin") {
-    requireAdminActor(ctx.actor);
+  if (isManagementActor(ctx.actor)) {
+    requireManagementActor(ctx.actor);
   } else {
     requireOwnAgentActor(ctx.actor);
   }
-  const ownerId = ctx.actor.type === "agent" ? ctx.actor.agentId : undefined;
+  const ownerId = ctx.actor.type === "agent" && ctx.actor.role === "agent" ? ctx.actor.agentId : undefined;
   const deleted = await deleteTaskRecord(
     ctx.env.DB,
     id,
     ownerId,
-    ctx.actor.type === "admin" ? "not_deleting" : "active",
+    isManagementActor(ctx.actor) ? "not_deleting" : "active",
   );
   if (!deleted) throw notFound("待办不存在");
 }

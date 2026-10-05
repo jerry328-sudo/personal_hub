@@ -1,5 +1,6 @@
 import type { AgentKeyMetadataDto } from "../../../shared/contracts";
 import type { AgentAccessMode, AgentReadMode, AgentScope, AgentStatus } from "../../env";
+import type { ManagementActor } from "../../shared/authorize";
 import { conflict } from "../../shared/errors";
 
 const MAX_LIVE_KEYS_PER_AGENT = 2;
@@ -384,15 +385,25 @@ export async function findAdminCredential(db: D1Database): Promise<AdminCredenti
 }
 
 export async function rotateAdminCredential(
-  db: D1Database, sessionId: string, revision: number, digest: string, now: string,
+  db: D1Database, actor: ManagementActor, revision: number, digest: string, now: string,
 ): Promise<boolean> {
-  const results = await db.batch<{ revision: number }>([
-    db.prepare(`UPDATE admin_credentials SET secret_hash = ?, revision = revision + 1, updated_at = ?
+  // 在同一个事务的凭据更新中核验当前会话或总管密钥，避免撤销竞态。
+  const authorization = actor.type === "admin"
+    ? db.prepare(`UPDATE admin_credentials SET secret_hash = ?, revision = revision + 1, updated_at = ?
       WHERE id = 1 AND revision = ? AND EXISTS (
         SELECT 1 FROM admin_sessions WHERE id = ? AND revoked_at IS NULL
         AND expires_at > ? AND credential_revision = ?
         AND (passkey_id IS NULL OR EXISTS (SELECT 1 FROM admin_passkeys p WHERE p.id = admin_sessions.passkey_id AND p.revoked_at IS NULL))
-      ) RETURNING revision`).bind(digest, now, revision, sessionId, now, revision),
+      ) RETURNING revision`).bind(digest, now, revision, actor.sessionId, now, revision)
+    : db.prepare(`UPDATE admin_credentials SET secret_hash = ?, revision = revision + 1, updated_at = ?
+      WHERE id = 1 AND revision = ? AND EXISTS (
+        SELECT 1 FROM agent_keys k JOIN agents a ON a.id = k.agent_id
+        WHERE k.id = ? AND a.id = ? AND k.revoked_at IS NULL
+        AND (k.expires_at IS NULL OR k.expires_at > ?) AND a.status = 'active'
+        AND a.scope = 'all' AND a.access_mode = 'read_write' AND a.read_mode IS NULL
+      ) RETURNING revision`).bind(digest, now, revision, actor.keyId, actor.agentId, now);
+  const results = await db.batch<{ revision: number }>([
+    authorization,
     db.prepare(`UPDATE admin_sessions SET revoked_at = COALESCE(revoked_at, ?)
       WHERE credential_revision < (SELECT revision FROM admin_credentials WHERE id = 1)`).bind(now),
     db.prepare(`UPDATE admin_passkeys SET revoked_at = COALESCE(revoked_at, ?)

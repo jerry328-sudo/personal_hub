@@ -7,10 +7,11 @@ import { badRequest, forbidden } from "../../shared/errors";
 import {
   applyPrivateHeaders,
   readLimitedJson,
+  requireManagementWriteOrigin,
   requireSameOrigin,
 } from "../../shared/http";
 import { LIMITS } from "../../../shared/limits";
-import { requireAdminSession } from "./middleware";
+import { requireAdminSession, requireManagementAccess } from "./middleware";
 import {
   getAdminSession,
   changeAdminSecret,
@@ -53,8 +54,8 @@ function privateResponse(response: Response): Response {
 }
 
 export function registerAuthRoutes(app: Hono<AppEnv>): void {
-  app.post("/api/v1/auth/change-secret", requireAdminSession(), async (c) => {
-    sameOrigin(c.req.raw, c.env.APP_ORIGIN);
+  app.post("/api/v1/auth/change-secret", requireManagementAccess(), async (c) => {
+    requireManagementWriteOrigin(c.req.raw, c.env.APP_ORIGIN, c.get("actor"));
     const body = await readLimitedJson(c.req.raw, LIMITS.jsonRequestBytes);
     const input = parseBody(changeAdminSecretSchema, body);
     const cookie = await changeAdminSecret(serviceContext(c), c.req.raw, input);
@@ -85,7 +86,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
 
   app.get(
     "/api/v1/admin/agents/:id/keys",
-    requireAdminSession(),
+    requireManagementAccess(),
     async (c) => {
       const agentId = pathId(c.req.param("id"), "Agent ID");
       const items = await listAgentKeys(serviceContext(c), agentId);
@@ -95,9 +96,9 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
 
   app.post(
     "/api/v1/admin/agents/:id/keys",
-    requireAdminSession(),
+    requireManagementAccess(),
     async (c) => {
-      sameOrigin(c.req.raw, c.env.APP_ORIGIN);
+      requireManagementWriteOrigin(c.req.raw, c.env.APP_ORIGIN, c.get("actor"));
       const agentId = pathId(c.req.param("id"), "Agent ID");
       const body = await readLimitedJson(c.req.raw, LIMITS.jsonRequestBytes);
       const input = parseBody(issueKeySchema, body);
@@ -108,9 +109,9 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
 
   app.delete(
     "/api/v1/admin/agents/:id/keys/:keyId",
-    requireAdminSession(),
+    requireManagementAccess(),
     async (c) => {
-      sameOrigin(c.req.raw, c.env.APP_ORIGIN);
+      requireManagementWriteOrigin(c.req.raw, c.env.APP_ORIGIN, c.get("actor"));
       const agentId = pathId(c.req.param("id"), "Agent ID");
       const keyId = pathId(c.req.param("keyId"), "Key ID");
       await revokeAgentKey(serviceContext(c), agentId, keyId);

@@ -59,7 +59,7 @@ const MANAGER_ROUTES: RouteSummary[] = [
   { method: "GET", path: "/api/v1/manager/entries/{id}/versions", purpose: "读取版本目录" },
   { method: "GET", path: "/api/v1/manager/entries/{id}/versions/{version}", purpose: "读取指定版本" },
   { method: "GET, POST", path: "/api/v1/manager/tasks", purpose: "跨 Agent 读取或创建待办" },
-  { method: "PATCH", path: "/api/v1/manager/tasks/{id}", purpose: "修改可管理待办；总管不能删除" },
+  { method: "PATCH, DELETE", path: "/api/v1/manager/tasks/{id}", purpose: "修改或删除任意来源待办" },
   { method: "POST", path: "/api/v1/manager/agents/{agent_id}/attachments", purpose: "为目标 Agent 上传图片" },
   { method: "GET", path: "/api/v1/media/{attachment_id}", purpose: "读取可管理的私有图片" },
   { method: "POST", path: "/api/v1/manager/report", purpose: "上报总管本轮结果" },
@@ -75,6 +75,7 @@ const ADMIN_ROUTES: RouteSummary[] = [
   { method: "DELETE", path: "/api/v1/admin/agents/{id}", purpose: "分步清理并永久删除 Agent" },
   { method: "GET, POST", path: "/api/v1/admin/agents/{id}/keys", purpose: "列出元数据或签发新密钥" },
   { method: "DELETE", path: "/api/v1/admin/agents/{id}/keys/{key_id}", purpose: "撤销密钥" },
+  { method: "GET, PUT", path: "/api/v1/admin/agents/{id}/read-access", purpose: "读取或替换只读身份的来源授权" },
   { method: "GET", path: "/api/v1/admin/entries", purpose: "跨 Agent 分页读取条目" },
   { method: "GET", path: "/api/v1/admin/entries/counts", purpose: "准确统计未读、重要未读、归档和待办数量" },
   { method: "POST", path: "/api/v1/admin/entries/read", purpose: "将筛选范围内的全部当前版本标为已读" },
@@ -91,6 +92,8 @@ const ADMIN_ROUTES: RouteSummary[] = [
   { method: "GET", path: "/api/v1/auth/session", purpose: "读取管理员会话" },
   { method: "POST", path: "/api/v1/auth/logout", purpose: "撤销当前管理员会话" },
   { method: "POST", path: "/api/v1/auth/change-secret", purpose: "验证当前登录密钥后修改，并使全部管理员会话失效" },
+  { method: "GET", path: "/api/v1/auth/passkeys", purpose: "查看通行密钥绑定元数据" },
+  { method: "DELETE", path: "/api/v1/auth/passkeys/{id}", purpose: "撤销通行密钥绑定及关联访问" },
 ];
 
 function discoveryRole(actor: Actor): DiscoveryRole {
@@ -100,7 +103,8 @@ function discoveryRole(actor: Actor): DiscoveryRole {
 
 function routesFor(role: DiscoveryRole): RouteSummary[] {
   if (role === "admin") return ADMIN_ROUTES;
-  if (role === "manager") return MANAGER_ROUTES;
+  if (role === "manager") return [...MANAGER_ROUTES, ...ADMIN_ROUTES.filter((route) =>
+    route.path !== "/api/v1/auth/session" && route.path !== "/api/v1/auth/logout")];
   return role === "reader" ? READER_ROUTES : AGENT_ROUTES;
 }
 
@@ -199,7 +203,7 @@ const AGENT_DOCS = `## 当前凭据角色：普通 Agent
 
 const MANAGER_DOCS = `## 当前凭据角色：总管 Agent
 
-只可使用 \`/api/v1/manager\` 前缀。总管能跨 Agent 读取和写入业务内容，但不能管理密钥、管理员会话、Agent 生命周期或永久删除。
+总管保留 \`/api/v1/manager\` 入口，并可用同一 Bearer 密钥访问 \`/api/v1/admin\` 的全部管理接口，包括条目处理与删除、待办删除、Agent 生命周期、密钥签发与撤销、只读来源授权和登录安全管理。密钥调用允许不携带 Origin；携带时必须与 APP_ORIGIN 相同。
 
 - \`GET /api/v1/manager/agents\`：Agent 基本状态。
 - \`GET /api/v1/manager/entries\`：跨 Agent 列表；用 \`agent_id\` 限定目标，用 \`view=full\` 取得完整正文。
@@ -207,11 +211,13 @@ const MANAGER_DOCS = `## 当前凭据角色：总管 Agent
 - \`GET /api/v1/manager/entries/{id}\`：当前完整内容。
 - \`GET /api/v1/manager/entries/{id}/versions[/{version}]\`：版本目录或指定版本。
 - \`POST /api/v1/manager/entries/{id}/versions\`：向原归属条目追加完整版本。
-- \`GET|POST /api/v1/manager/tasks\`；\`PATCH /api/v1/manager/tasks/{id}\`：跨 Agent 待办。独立待办必须指定 agent_id；总管不能删除待办。
+- \`GET|POST /api/v1/manager/tasks\`；\`PATCH|DELETE /api/v1/manager/tasks/{id}\`：跨 Agent 待办。独立待办必须指定 agent_id。
 - \`POST /api/v1/manager/agents/{agent_id}/attachments\`：为目标 Agent 上传图片。
 - \`POST /api/v1/manager/report\`：上报本轮结果。
 
 总管创建和更新内容时，目标 Agent 仍是资源 owner，总管仅记录为实际操作者。
+
+管理接口详见下方。管理员 Cookie 会话读取/退出与设备通行密钥注册仍使用原网页登录流程，总管密钥不会被转换成网页会话。修改管理员登录密钥仍须提供当前登录密钥。
 `;
 
 const READER_DOCS = `## 当前凭据角色：只读 Agent
@@ -239,14 +245,15 @@ const READER_DOCS = `## 当前凭据角色：只读 Agent
 
 const ADMIN_DOCS = `## 当前凭据角色：管理员
 
-使用 \`/api/v1/admin\` 前缀。所有 POST、PATCH、DELETE 都要求请求 Origin 与 APP_ORIGIN 相同。
+使用 \`/api/v1/admin\` 前缀。管理员 Cookie 写操作要求请求 Origin 与 APP_ORIGIN 相同；启用的总管 Bearer 密钥也可调用管理接口，无 Origin 的密钥调用可用，异源调用被拒绝。
 
 普通和总管 Agent 签发密钥时，expires_at 省略或为 null 表示无限期；明文仍只返回一次。
-管理员可 POST /api/v1/auth/change-secret，正文为 { "current_secret": "当前密钥", "new_secret": "新密钥" }。新密钥须为 32–1024 个字符且不同于旧密钥；成功返回 204、清除 Cookie 并撤销全部旧管理员会话，Agent 密钥不受影响。此接口要求管理员会话、同源和限流。
+管理员和总管可 POST /api/v1/auth/change-secret，正文为 { "current_secret": "当前密钥", "new_secret": "新密钥" }。新密钥须为 32–1024 个字符且不同于旧密钥；成功返回 204、清除 Cookie 并撤销全部旧管理员会话及通行密钥绑定，Agent 密钥不受影响。此接口要求管理员或启用的总管身份、正确的当前登录密钥和限流；Cookie 写操作须同源。
 
 - \`GET|POST /api/v1/admin/agents\`；\`PATCH /api/v1/admin/agents/{id}\`：列出、创建和配置 Agent。
 - \`POST /api/v1/admin/agents/{id}/enable|disable|remove|restore\`；\`DELETE /api/v1/admin/agents/{id}\`：生命周期和分步删除。
 - \`GET|POST /api/v1/admin/agents/{id}/keys\`；\`DELETE /api/v1/admin/agents/{id}/keys/{key_id}\`：密钥轮换。新密钥明文只返回一次。
+- \`GET|PUT /api/v1/admin/agents/{id}/read-access\`：查看或完整替换只读来源授权；替换须携带当前 base_revision。
 - \`GET /api/v1/admin/entries\`；\`POST /api/v1/admin/agents/{agent_id}/entries\`：跨 Agent 读取或创建条目。
 - \`GET /api/v1/admin/entries/{id}\`；\`GET|POST /api/v1/admin/entries/{id}/versions\`；\`GET /api/v1/admin/entries/{id}/versions/{version}\`：详情与版本。
 - \`PATCH /api/v1/admin/entries/{id}/state\`：修改 archived、read_version、completed；完成时间由服务器生成。
@@ -255,7 +262,8 @@ const ADMIN_DOCS = `## 当前凭据角色：管理员
 - \`DELETE /api/v1/admin/entries/{id}\`：永久删除整条记录；关联待办保留并解除来源。
 - \`GET|POST /api/v1/admin/tasks\`；\`PATCH|DELETE /api/v1/admin/tasks/{id}\`：全部待办。无来源且未指定 agent_id 时归入 manual。
 - \`POST /api/v1/admin/agents/{agent_id}/attachments\`：为目标 Agent 上传图片。
-- \`GET /api/v1/auth/session\`、\`POST /api/v1/auth/logout\`：当前会话和退出。
+- \`GET /api/v1/auth/passkeys\`、\`DELETE /api/v1/auth/passkeys/{id}\`：查看或撤销通行密钥绑定。
+- \`GET /api/v1/auth/session\`、\`POST /api/v1/auth/logout\`：仅用于真实管理员 Cookie 会话的查看和退出。
 `;
 
 export function getFullApiDocs(actor: Actor): string {
@@ -263,7 +271,7 @@ export function getFullApiDocs(actor: Actor): string {
   const roleDocs = role === "admin"
     ? ADMIN_DOCS
     : role === "manager"
-      ? MANAGER_DOCS
+      ? `${MANAGER_DOCS}\n${ADMIN_DOCS.replace("## 当前凭据角色：管理员", "## 总管可调用的管理接口")}`
       : role === "reader"
         ? READER_DOCS
         : AGENT_DOCS;

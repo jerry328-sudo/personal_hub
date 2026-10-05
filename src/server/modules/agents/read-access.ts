@@ -6,7 +6,7 @@ import type {
 import type { ServiceContext } from "../../env";
 import type { AgentAccessMode, AgentReadMode, AgentScope, AgentStatus } from "../../env";
 import { recordReaderAccessChange } from "../../shared/access-log";
-import { requireAdminActor } from "../../shared/authorize";
+import { requireManagementActor } from "../../shared/authorize";
 import { badRequest, conflict, notFound } from "../../shared/errors";
 import { nowIso } from "../../shared/ids";
 import {
@@ -68,7 +68,7 @@ function toSourceDto(row: ReadAccessSourceRow): ReadAccessSourceDto {
 }
 
 export async function getReaderAccess(ctx: ServiceContext, readerId: string): Promise<ReadAccessDto> {
-  requireAdminActor(ctx.actor);
+  requireManagementActor(ctx.actor);
   const row = await findReaderAccessRow(ctx.env.DB, readerId);
   if (row === null) throw notFound("Agent 不存在");
   if (row.access_mode !== "read_only") throw conflict("该身份不是只读 Agent");
@@ -89,7 +89,8 @@ export async function replaceReaderAccess(
   readerId: string,
   input: UpdateReadAccessInput,
 ): Promise<ReadAccessDto> {
-  requireAdminActor(ctx.actor);
+  requireManagementActor(ctx.actor);
+  const actorId = ctx.actor.type === "admin" ? "admin" : ctx.actor.agentId;
   const targetIds = normalizeReadTargets(input.mode, input.agent_ids ?? []);
   await validateReadTargets(ctx.env.DB, targetIds);
 
@@ -104,6 +105,7 @@ export async function replaceReaderAccess(
 
   const logRejection = (result: "rejected"): void => {
     recordReaderAccessChange({
+      actor: actorId,
       requestId: ctx.requestId,
       readerAgentId: readerId,
       previousRevision: previous?.permissions_revision ?? null,
@@ -132,6 +134,7 @@ export async function replaceReaderAccess(
   }
 
   recordReaderAccessChange({
+    actor: actorId,
     requestId: ctx.requestId,
     readerAgentId: readerId,
     previousRevision: previous?.permissions_revision ?? null,

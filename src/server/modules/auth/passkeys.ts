@@ -8,10 +8,10 @@ import { isoBase64URL } from "@simplewebauthn/server/helpers";
 import type { PasskeyDto } from "../../../shared/contracts";
 import { serviceContext, type AppContext, type AppEnv } from "../../env";
 import { badRequest, conflict, forbidden, unauthenticated } from "../../shared/errors";
-import { readLimitedJson, requireSameOrigin } from "../../shared/http";
+import { readLimitedJson, requireManagementWriteOrigin, requireSameOrigin } from "../../shared/http";
 import { newEntityId, nowIso } from "../../shared/ids";
 import { generateSecret, verifyAdminLoginHash, verifyAdminSecret } from "./crypto";
-import { requireAdminSession } from "./middleware";
+import { requireAdminSession, requireManagementAccess } from "./middleware";
 import { findAdminCredential } from "./repository";
 import { checkLoginRateLimit, createAdminSession } from "./service";
 import { listPasskeys, revokePasskey } from "./passkey-management";
@@ -88,7 +88,7 @@ async function consumeChallenge(c: AppContext, kind: "register" | "login"): Prom
 }
 
 export function registerPasskeyRoutes(app: Hono<AppEnv>): void {
-  app.get("/api/v1/auth/passkeys", requireAdminSession(), async c => {
+  app.get("/api/v1/auth/passkeys", requireManagementAccess(), async c => {
     return c.json(await listPasskeys(serviceContext(c)));
   });
 
@@ -186,8 +186,8 @@ export function registerPasskeyRoutes(app: Hono<AppEnv>): void {
     return c.json(result.session);
   });
 
-  app.delete("/api/v1/auth/passkeys/:id", requireAdminSession(), async c => {
-    origin(c);
+  app.delete("/api/v1/auth/passkeys/:id", requireManagementAccess(), async c => {
+    requireManagementWriteOrigin(c.req.raw, c.env.APP_ORIGIN, c.get("actor"));
     await revokePasskey(serviceContext(c), c.req.param("id"));
     return c.body(null, 204);
   });

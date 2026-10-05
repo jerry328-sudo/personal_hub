@@ -9,11 +9,11 @@ import {
 import type { AppContext, AppEnv } from "../../env";
 import { serviceContext } from "../../env";
 import {
-  requireAdminSession,
+  requireManagementAccess,
   requireAgentRole,
 } from "../auth/middleware";
 import { badRequest } from "../../shared/errors";
-import { readLimitedJson, requireSameOrigin } from "../../shared/http";
+import { readLimitedJson, requireManagementWriteOrigin } from "../../shared/http";
 import {
   createTask,
   deleteTask,
@@ -47,7 +47,7 @@ async function parsePatchBody(c: AppContext): Promise<z.infer<typeof patchTaskSc
 }
 
 function requireAdminWriteOrigin(c: AppContext): void {
-  requireSameOrigin(c.req.raw, c.env.APP_ORIGIN);
+  requireManagementWriteOrigin(c.req.raw, c.env.APP_ORIGIN, c.get("actor"));
 }
 
 function taskId(value: string): string {
@@ -92,22 +92,28 @@ export function registerTaskRoutes(app: Hono<AppEnv>): void {
     setPrivateResponseHeaders(c);
     return c.json(await updateTask(serviceContext(c), taskId(c.req.param("id")), await parsePatchBody(c)));
   });
+  app.delete("/api/v1/manager/tasks/:id", requireAgentRole(["manager"]), async (c) => {
+    requireAdminWriteOrigin(c);
+    setPrivateResponseHeaders(c);
+    await deleteTask(serviceContext(c), taskId(c.req.param("id")));
+    return c.body(null, 204);
+  });
 
-  app.get("/api/v1/admin/tasks", requireAdminSession(), async (c) => {
+  app.get("/api/v1/admin/tasks", requireManagementAccess(), async (c) => {
     setPrivateResponseHeaders(c);
     return c.json(await listTasks(serviceContext(c), parseQuery(c)));
   });
-  app.post("/api/v1/admin/tasks", requireAdminSession(), async (c) => {
+  app.post("/api/v1/admin/tasks", requireManagementAccess(), async (c) => {
     requireAdminWriteOrigin(c);
     setPrivateResponseHeaders(c);
     return c.json(await createTask(serviceContext(c), await parseCreateBody(c)), 201);
   });
-  app.patch("/api/v1/admin/tasks/:id", requireAdminSession(), async (c) => {
+  app.patch("/api/v1/admin/tasks/:id", requireManagementAccess(), async (c) => {
     requireAdminWriteOrigin(c);
     setPrivateResponseHeaders(c);
     return c.json(await updateTask(serviceContext(c), taskId(c.req.param("id")), await parsePatchBody(c)));
   });
-  app.delete("/api/v1/admin/tasks/:id", requireAdminSession(), async (c) => {
+  app.delete("/api/v1/admin/tasks/:id", requireManagementAccess(), async (c) => {
     requireAdminWriteOrigin(c);
     setPrivateResponseHeaders(c);
     await deleteTask(serviceContext(c), taskId(c.req.param("id")));

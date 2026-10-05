@@ -294,7 +294,7 @@ describe("Personal Hub Worker API", () => {
     const managerDocs = await managerDocsResponse.text();
     expect(managerDocs).toContain("当前凭据角色：总管 Agent");
     expect(managerDocs).toContain("/api/v1/manager/entries");
-    expect(managerDocs).not.toContain("/api/v1/admin/agents/{id}/keys");
+    expect(managerDocs).toContain("/api/v1/admin/agents/{id}/keys");
 
     const disableManager = await api(
       `/api/v1/admin/agents/${manager.agent.id}/disable`,

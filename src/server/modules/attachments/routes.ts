@@ -2,20 +2,14 @@ import type { Hono } from "hono";
 import type { AppEnv } from "../../env";
 import { serviceContext } from "../../env";
 import { badRequest, forbidden } from "../../shared/errors";
-import { applyPrivateHeaders } from "../../shared/http";
+import { applyPrivateHeaders, requireManagementWriteOrigin } from "../../shared/http";
 import {
   ALL_ROLES,
-  requireAdminSession,
+  requireManagementAccess,
   requireAgentRole,
   requireIdentity,
 } from "../auth/middleware";
 import { getAttachmentMedia, uploadAttachment } from "./service";
-
-function requireAdminWriteOrigin(request: Request, expectedOrigin: string): void {
-  if (request.headers.get("Origin") !== expectedOrigin) {
-    throw forbidden("请求来源无效");
-  }
-}
 
 function pathId(value: string, label: string): string {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(value)) throw badRequest(`${label}格式无效`);
@@ -54,9 +48,9 @@ export function registerAttachmentRoutes(app: Hono<AppEnv>): void {
 
   app.post(
     "/api/v1/admin/agents/:agentId/attachments",
-    requireAdminSession(),
+    requireManagementAccess(),
     async (c) => {
-      requireAdminWriteOrigin(c.req.raw, c.env.APP_ORIGIN);
+      requireManagementWriteOrigin(c.req.raw, c.env.APP_ORIGIN, c.get("actor"));
       const attachment = await uploadAttachment(
         serviceContext(c),
         pathId(c.req.param("agentId"), "Agent ID"),

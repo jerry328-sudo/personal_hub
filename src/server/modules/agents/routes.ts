@@ -7,11 +7,11 @@ import {
   updateAgentSchema,
   updateReadAccessSchema,
 } from "../../../shared/validation";
-import type { AppEnv } from "../../env";
+import type { Actor, AppEnv } from "../../env";
 import { serviceContext } from "../../env";
 import { badRequest } from "../../shared/errors";
-import { readLimitedJson, requireSameOrigin } from "../../shared/http";
-import { requireAdminSession, requireAgentRole } from "../auth/middleware";
+import { readLimitedJson, requireManagementWriteOrigin } from "../../shared/http";
+import { requireManagementAccess, requireAgentRole } from "../auth/middleware";
 import { purgeAgentStep, type AgentPurgeDependencies } from "./lifecycle";
 import { getReaderAccess, replaceReaderAccess } from "./read-access";
 import {
@@ -46,66 +46,66 @@ function parseAgentListQuery(value: Record<string, string>): z.output<typeof age
   return parsed.data;
 }
 
-function requireAdminWriteOrigin(request: Request, env: CloudflareBindings): void {
-  requireSameOrigin(request, env.APP_ORIGIN);
+function requireAdminWriteOrigin(request: Request, env: CloudflareBindings, actor: Actor): void {
+  requireManagementWriteOrigin(request, env.APP_ORIGIN, actor);
 }
 
 export type AgentRouteDependencies = AgentPurgeDependencies;
 
 export function registerAgentRoutes(app: Hono<AppEnv>, dependencies: AgentRouteDependencies): void {
-  const adminOnly = requireAdminSession();
+  const managementOnly = requireManagementAccess();
   const ownAgentOnly = requireAgentRole(["agent"]);
   const managerOnly = requireAgentRole(["manager"]);
 
-  app.get("/api/v1/admin/agents", adminOnly, async (c) => {
+  app.get("/api/v1/admin/agents", managementOnly, async (c) => {
     const query = parseAgentListQuery(c.req.query());
     return c.json(await listAgents(serviceContext(c), query, "admin"));
   });
 
-  app.post("/api/v1/admin/agents", adminOnly, async (c) => {
-    requireAdminWriteOrigin(c.req.raw, c.env);
+  app.post("/api/v1/admin/agents", managementOnly, async (c) => {
+    requireAdminWriteOrigin(c.req.raw, c.env, c.get("actor"));
     const input = await parseJson(c.req.raw, createAgentSchema);
     return c.json(await createAgent(serviceContext(c), input), 201);
   });
 
-  app.patch("/api/v1/admin/agents/:id", adminOnly, async (c) => {
-    requireAdminWriteOrigin(c.req.raw, c.env);
+  app.patch("/api/v1/admin/agents/:id", managementOnly, async (c) => {
+    requireAdminWriteOrigin(c.req.raw, c.env, c.get("actor"));
     const input = await parseJson(c.req.raw, updateAgentSchema);
     return c.json(await updateAgent(serviceContext(c), c.req.param("id"), input));
   });
 
-  app.post("/api/v1/admin/agents/:id/enable", adminOnly, async (c) => {
-    requireAdminWriteOrigin(c.req.raw, c.env);
+  app.post("/api/v1/admin/agents/:id/enable", managementOnly, async (c) => {
+    requireAdminWriteOrigin(c.req.raw, c.env, c.get("actor"));
     return c.json(await enableAgent(serviceContext(c), c.req.param("id")));
   });
 
-  app.post("/api/v1/admin/agents/:id/disable", adminOnly, async (c) => {
-    requireAdminWriteOrigin(c.req.raw, c.env);
+  app.post("/api/v1/admin/agents/:id/disable", managementOnly, async (c) => {
+    requireAdminWriteOrigin(c.req.raw, c.env, c.get("actor"));
     return c.json(await disableAgent(serviceContext(c), c.req.param("id")));
   });
 
-  app.post("/api/v1/admin/agents/:id/remove", adminOnly, async (c) => {
-    requireAdminWriteOrigin(c.req.raw, c.env);
+  app.post("/api/v1/admin/agents/:id/remove", managementOnly, async (c) => {
+    requireAdminWriteOrigin(c.req.raw, c.env, c.get("actor"));
     return c.json(await removeAgent(serviceContext(c), c.req.param("id")));
   });
 
-  app.post("/api/v1/admin/agents/:id/restore", adminOnly, async (c) => {
-    requireAdminWriteOrigin(c.req.raw, c.env);
+  app.post("/api/v1/admin/agents/:id/restore", managementOnly, async (c) => {
+    requireAdminWriteOrigin(c.req.raw, c.env, c.get("actor"));
     return c.json(await restoreAgent(serviceContext(c), c.req.param("id")));
   });
 
-  app.delete("/api/v1/admin/agents/:id", adminOnly, async (c) => {
-    requireAdminWriteOrigin(c.req.raw, c.env);
+  app.delete("/api/v1/admin/agents/:id", managementOnly, async (c) => {
+    requireAdminWriteOrigin(c.req.raw, c.env, c.get("actor"));
     const progress = await purgeAgentStep(serviceContext(c), c.req.param("id"), dependencies);
     return c.json(progress, progress.status === "pending" ? 202 : 200);
   });
 
-  app.get("/api/v1/admin/agents/:id/read-access", adminOnly, async (c) => {
+  app.get("/api/v1/admin/agents/:id/read-access", managementOnly, async (c) => {
     return c.json(await getReaderAccess(serviceContext(c), c.req.param("id")));
   });
 
-  app.put("/api/v1/admin/agents/:id/read-access", adminOnly, async (c) => {
-    requireAdminWriteOrigin(c.req.raw, c.env);
+  app.put("/api/v1/admin/agents/:id/read-access", managementOnly, async (c) => {
+    requireAdminWriteOrigin(c.req.raw, c.env, c.get("actor"));
     const input = await parseJson(c.req.raw, updateReadAccessSchema);
     return c.json(await replaceReaderAccess(serviceContext(c), c.req.param("id"), input));
   });

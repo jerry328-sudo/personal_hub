@@ -1,6 +1,8 @@
 import { LIMITS } from "../../../shared/limits";
 import { badRequest, payloadTooLarge, unsupportedMedia } from "../../shared/errors";
 
+export { extractMarkdownImageUrls } from "../../../shared/markdown-images";
+
 export const IMAGE_CONTENT_TYPES = [
   "image/png",
   "image/jpeg",
@@ -166,39 +168,4 @@ export async function readImageUpload(request: Request): Promise<ValidatedImageU
   const file = form.get("file");
   if (!(file instanceof File)) throw badRequest("multipart 字段 file 必须是一张图片");
   return validateImageUpload(file);
-}
-
-function stripMarkdownCode(markdown: string): string {
-  return markdown
-    .replace(/~~~[\s\S]*?~~~/g, "")
-    .replace(/```[\s\S]*?```/g, "")
-    .replace(/`[^`\n]*`/g, "");
-}
-
-/** Extracts inline and reference-style image URLs for server-side policy checks. */
-export function extractMarkdownImageUrls(markdown: string): string[] {
-  const source = stripMarkdownCode(markdown);
-  const definitions = new Map<string, string>();
-  for (const match of source.matchAll(/^\s*\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))/gm)) {
-    const label = match[1]?.trim().toLowerCase();
-    const url = match[2] ?? match[3];
-    if (label && url) definitions.set(label, url);
-  }
-
-  const urls: string[] = [];
-  for (const match of source.matchAll(/!\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+["'][^"']*["'])?\s*\)/g)) {
-    const url = match[1] ?? match[2];
-    if (url) urls.push(url);
-  }
-  for (const match of source.matchAll(/!\[([^\]]*)\]\[([^\]]*)\]/g)) {
-    const label = (match[2] || match[1] || "").trim().toLowerCase();
-    const url = definitions.get(label);
-    if (url) urls.push(url);
-  }
-  for (const match of source.matchAll(/!\[([^\]]+)\](?![ \t]*(?:\[|\())/g)) {
-    const label = match[1]?.trim().toLowerCase();
-    const url = label ? definitions.get(label) : undefined;
-    if (url) urls.push(url);
-  }
-  return [...new Set(urls)];
 }

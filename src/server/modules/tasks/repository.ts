@@ -16,7 +16,6 @@ export type TaskRow = {
 export type TaskListScope = {
   agentId?: string;
   done?: boolean;
-  excludeArchivedEntries?: boolean;
   readerAccess?: ReaderScope;
   afterId?: string;
   limit: number;
@@ -65,12 +64,9 @@ export function taskDto(row: TaskRow): TaskDto {
   };
 }
 
-export const visibleTaskClause = "NOT EXISTS (SELECT 1 FROM entries source_entry WHERE source_entry.id = tasks.entry_id AND source_entry.archived = 1)";
-
 export async function listTasks(db: D1Database, scope: TaskListScope): Promise<TaskRow[]> {
   const where: string[] = [];
   const bindings: unknown[] = [];
-  if (scope.excludeArchivedEntries) where.push(visibleTaskClause);
 
   if (scope.agentId !== undefined) {
     where.push("agent_id = ?");
@@ -150,7 +146,7 @@ export async function insertTask(
     )
     AND (
       ? IS NULL OR EXISTS (
-        SELECT 1 FROM entries e WHERE e.id = ? AND e.agent_id = ?
+        SELECT 1 FROM entries e WHERE e.id = ? AND e.agent_id = ? AND e.archived = 0
       )
     )
     RETURNING id, agent_id, entry_id, title, done, due_at, created_at
@@ -225,6 +221,15 @@ export async function deleteTask(
 
 export function prepareDetachEntryTasks(db: D1Database, entryId: string): D1PreparedStatement {
   return db.prepare("UPDATE tasks SET entry_id = NULL WHERE entry_id = ?").bind(entryId);
+}
+
+export async function clearCompletedTasks(db: D1Database, ownerId: string | undefined, policy: TaskOwnerWritePolicy): Promise<number> {
+  // One atomic statement; no per-task loop, pagination or automatic retry.
+  const ownerClause = ownerId === undefined ? "" : " AND agent_id = ?";
+  const statement = db.prepare(`DELETE FROM tasks WHERE done = 1${ownerClause}${ownerLifecycleClause(policy)}`);
+  const result = await (ownerId === undefined ? statement : statement.bind(ownerId)).run();
+  if (!result.success) throw new Error("Completed task cleanup failed");
+  return result.meta.changes ?? 0;
 }
 
 export function prepareMoveAgentTasksToManual(db: D1Database, agentId: string): D1PreparedStatement {

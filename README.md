@@ -8,6 +8,8 @@ Personal Hub 是一个运行在 Cloudflare Workers 上的个人信息中心。�
 
 ## 当前状态
 
+Codex Hub 远程面板及三项 CPU 优化已于 2026-10-05 部署并通过线上 MCP 验证；插件尚需在 Codex 安装并连接。源目录、接入方式与验证结果见 [Codex 插件说明](docs/codex-plugin.md)和[发布记录](docs/releases/2026-10-05-codex-panel-performance.md)。
+
 完整代码包含 Hono Worker API、React 管理网页、D1 迁移、私有 R2 附件流程以及单元/集成测试。生产环境已于 2026-09-18 更新至 https://personal-hub.echem.ai ，原 workers.dev 入口关闭。`wrangler.jsonc` 顶层仍使用本地模拟资源，`env.production` 绑定真实 D1 与私有 R2；staging 尚未创建。首次发布历史见[初次部署记录](docs/releases/2026-09-18-production.md)。
 
 ## 最短本地启动

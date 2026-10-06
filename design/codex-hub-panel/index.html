@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Personal Hub · Codex 面板模板</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="data.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="hub-app">
+    <header class="app-header">
+      <a class="brand" href="#" aria-label="Personal Hub 首页"><svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="m16 3 13 7-13 7L3 10 16 3Zm-13 14 13 7 13-7M3 24l13 7 13-7"/></svg><span>Personal Hub</span></a>
+      <div class="header-actions"><button class="icon-button" id="refresh" aria-label="刷新"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-2l2 3M4 16l2 3a7 7 0 0 0 12-2"/></svg></button><button class="button" id="manage">管理</button></div>
+    </header>
+    <nav class="main-tabs" aria-label="Hub 导航">
+      <button data-nav="inbox" aria-current="page">收件箱</button><button data-nav="sources">来源</button><button data-nav="tasks">待办</button><button data-nav="archive">归档</button>
+    </nav>
+    <main id="workspace" class="workspace" aria-label="Hub 工作区"></main>
+    <section id="selection-tray" class="selection-tray" aria-label="已选内容"></section>
+    <footer class="app-footer">交互模板 · 示例数据</footer>
+  </div>
+  <dialog id="modal" aria-labelledby="dialog-title"><div id="modal-content"></div></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

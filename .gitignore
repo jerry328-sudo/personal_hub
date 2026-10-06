@@ -9,3 +9,5 @@ coverage/
 playwright-report/
 test-results/
 .workers-types-pack/
+public/plugin/panel.html
+artifacts/

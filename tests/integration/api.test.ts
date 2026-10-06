@@ -127,7 +127,7 @@ async function uploadAttachment(token: string, filename: string): Promise<Attach
 }
 
 describe("Personal Hub Worker API", () => {
-  it("hides archived-source tasks from every admin filter and counts, restoring them on unarchive", async () => {
+  it("deletes linked tasks on archive across roles without restoring them on unarchive", async () => {
     const cookie = await loginAdmin("archived-tasks");
     const owner = await createAgent(cookie, "archived-task-owner");
     const entry = await createEntry(owner.key.secret, "archive task source");
@@ -150,11 +150,12 @@ describe("Personal Hub Worker API", () => {
     const after = await readJson<{ open_tasks: number }>(await api("/api/v1/admin/entries/counts", { headers }));
     expect(after.open_tasks).toBe(before.open_tasks - 1);
     const agentTasks = await readJson<Page<TaskDto>>(await api("/api/v1/agent/tasks?done=all", { headers: bearer }));
-    expect(agentTasks.items.map((task) => task.id).sort()).toEqual([linked.id, completed.id, standalone.id].sort());
+    expect(agentTasks.items.map((task) => task.id).sort()).toEqual([standalone.id]);
+    for (const id of [linked.id, completed.id]) expect(await env.DB.prepare("SELECT id FROM tasks WHERE id=?").bind(id).first()).toBeNull();
     await api(`/api/v1/admin/entries/${entry.id}/state`, jsonBody("PATCH", { archived: false }, headers));
     const restored = await readJson<Page<TaskDto>>(await api(`/api/v1/admin/tasks?agent_id=${owner.agent.id}&done=no`, { headers }));
-    expect(restored.items.map((task) => task.id).sort()).toEqual([linked.id, standalone.id].sort());
-    expect((await readJson<{ open_tasks: number }>(await api("/api/v1/admin/entries/counts", { headers }))).open_tasks).toBe(before.open_tasks);
+    expect(restored.items.map((task) => task.id).sort()).toEqual([standalone.id]);
+    expect((await readJson<{ open_tasks: number }>(await api("/api/v1/admin/entries/counts", { headers }))).open_tasks).toBe(before.open_tasks - 1);
   });
 
   it("filters archive time server-side with exclusive end, owner scope and bound cursors", async () => {

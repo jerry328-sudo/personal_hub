@@ -48,6 +48,8 @@ describe("full manager API permissions", () => {
     expect((await call("/api/v1/admin/entries/read", token, "POST", { agent_id: source.agent.id })).status).toBe(200);
     expect((await call(`/api/v1/admin/entries/${entry.id}/state`, token, "PATCH", { archived: true, completed: true })).status).toBe(200);
     expect((await call("/api/v1/admin/entries/counts", token)).status).toBe(200);
+    expect((await call("/api/v1/admin/tasks", token, "POST", { agent_id: source.agent.id, entry_id: entry.id, title: "Archived task rejected" })).status).toBe(409);
+    expect((await call(`/api/v1/admin/entries/${entry.id}/state`, token, "PATCH", { archived: false })).status).toBe(200);
     const task = await call("/api/v1/admin/tasks", token, "POST", { agent_id: source.agent.id, entry_id: entry.id, title: "Managed task" });
     expect(task.status).toBe(201);
     const taskId = (await task.json<{ id: string }>()).id;

@@ -24,6 +24,21 @@ export function TasksPage() {
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [deleting, setDeleting] = useState<TaskDto | null>(null);
+  const [clearScope, setClearScope] = useState<{ agentId?: string; label: string } | null>(null);
+  const [clearing, setClearing] = useState(false);
+
+  const prepareClear = () => {
+    setClearScope({ agentId: agentId || undefined, label: agentId ? agents.find((agent) => agent.id === agentId)?.name ?? agentId : "全部来源" });
+  };
+  const clearCompleted = async () => {
+    if (!clearScope || clearing) return;
+    setClearing(true);
+    try {
+      const { cleared } = await tasksApi.clearCompleted(clearScope.agentId);
+      setClearScope(null); showToast(`已清除 ${cleared} 项已完成待办`); notifyDataChanged();
+    } catch { setClearScope(null); showToast("暂时无法清除已完成待办，请稍后再试", "error"); }
+    finally { setClearing(false); }
+  };
 
   const load = useCallback(() => {
     setLoading(true);
@@ -61,7 +76,6 @@ export function TasksPage() {
       const updated = await tasksApi.update(task.id, { done: !task.done });
       setTasks((current) => current.map((item) => item.id === task.id ? updated : item));
       notifyDataChanged();
-      if ((filter === "open" && updated.done) || (filter === "done" && !updated.done)) load();
       showToast(updated.done ? "待办已完成" : "已恢复为未完成");
     } catch (reason) {
       showToast(reason instanceof Error ? reason.message : "待办更新失败", "error");
@@ -88,6 +102,7 @@ export function TasksPage() {
         <span className="spacer" /><button className="btn primary" type="button" onClick={() => setFormOpen(true)}><Plus aria-hidden="true" />新增待办</button>
       </header>
       <div className="task-toolbar">
+        <button className="btn" type="button" disabled={clearing} onClick={() => void prepareClear()}><Trash2 aria-hidden="true" />{clearing ? "处理中…" : "清除已完成"}</button>
         <div className="tabs compact-tabs" role="tablist">
           {([['open', '未完成'], ['done', '已完成'], ['all', '全部']] as Array<[TaskFilter, string]>).map(([id, label]) => <button className={`tab ${filter === id ? "active" : ""}`} key={id} type="button" role="tab" aria-selected={filter === id} onClick={() => setFilter(id)}>{label}</button>)}
         </div>
@@ -111,6 +126,7 @@ export function TasksPage() {
       ) : <EmptyState title={filter === "done" ? "还没有已完成的待办" : "这里暂时没有待办"} detail="可以手动添加，或从信息正文中创建。" />}
       <TaskForm open={formOpen} onClose={() => setFormOpen(false)} agents={agents} defaultAgentId={agentId || undefined} onCreated={() => load()} />
       <ConfirmDialog open={Boolean(deleting)} title="删除待办" description="删除待办不会影响它所关联的原始信息。" confirmLabel="删除" danger onClose={() => setDeleting(null)} onConfirm={remove} />
+      <ConfirmDialog open={Boolean(clearScope)} title="清除已完成待办" description={`将清除「${clearScope?.label ?? ""}」所有分页的已完成待办，包括归档关联项。搜索文字不影响范围。未完成待办和原始记录会保留。`} confirmLabel="确认清除" danger busy={clearing} onClose={() => { if (!clearing) setClearScope(null); }} onConfirm={clearCompleted} />
     </div>
   );
 }

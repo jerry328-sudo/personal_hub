@@ -229,7 +229,7 @@ const READER_DOCS = `## 当前凭据角色：只读 Agent
 - \`GET /api/v1/reader/entries\`：授权范围内的条目。支持 \`agent_id\`、\`view\`、\`query\`、\`start\`、\`end\`、\`time_field\`、\`completion\`、\`archived\`、\`important\`、\`read\`、\`order\`、\`limit\`、\`cursor\`。默认 \`view=brief\`、\`order=id_asc\`。
 - \`GET /api/v1/reader/entries/{id}\`：当前正文。
 - \`GET /api/v1/reader/entries/{id}/versions[/{version}]\`：历史版本目录或指定版本正文。
-- \`GET /api/v1/reader/tasks\`：授权范围内的待办，支持 \`agent_id\`、\`done\`、\`limit\`、\`cursor\`；保留已完成和归档关联记录，便于汇总与去重。
+- \`GET /api/v1/reader/tasks\`：授权范围内的待办，支持 \`agent_id\`、\`done\`、\`limit\`、\`cursor\`；归档记录时会删除全部关联待办，取消归档不会恢复。旧参数 \`include_archived\` 兼容接收但不改变结果。来源授权仍逐项校验。
 - \`GET /api/v1/media/{attachment_id}\`：授权范围内的私有图片，响应为 private、no-store。
 
 限制与恢复约定：
@@ -260,7 +260,8 @@ const ADMIN_DOCS = `## 当前凭据角色：管理员
 - \`POST /api/v1/admin/entries/read\`：正文为条目筛选字段（不含 view、order、cursor、limit），一次标记范围内所有页的当前版本，返回 \`{ updated: number }\`。无筛选表示所有条目，前端按栏目传入筛选。状态属于条目，全局共享；后续追加版本仍为未读。
 - \`GET /api/v1/admin/entries/counts\`：返回 unread、important_unread、archived、open_tasks，数据库汇总，不受分页限制。
 - \`DELETE /api/v1/admin/entries/{id}\`：永久删除整条记录；关联待办保留并解除来源。
-- \`GET|POST /api/v1/admin/tasks\`；\`PATCH|DELETE /api/v1/admin/tasks/{id}\`：全部待办。无来源且未指定 agent_id 时归入 manual。
+- \`GET|POST /api/v1/admin/tasks\`；\`PATCH|DELETE /api/v1/admin/tasks/{id}\`：全部待办。无来源且未指定 agent_id 时归入 manual。已归档记录不能新建关联待办。
+- \`POST /api/v1/admin/tasks/completed/clear\`：一次性清除当前来源范围内所有已完成待办，包括归档关联项；不删除未完成待办或原始记录。
 - \`POST /api/v1/admin/agents/{agent_id}/attachments\`：为目标 Agent 上传图片。
 - \`GET /api/v1/auth/passkeys\`、\`DELETE /api/v1/auth/passkeys/{id}\`：查看或撤销通行密钥绑定。
 - \`GET /api/v1/auth/session\`、\`POST /api/v1/auth/logout\`：仅用于真实管理员 Cookie 会话的查看和退出。

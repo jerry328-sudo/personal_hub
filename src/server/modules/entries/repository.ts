@@ -10,7 +10,6 @@ import type {
 import type { ReadScope } from "../../shared/authorize";
 import { boolFromDb } from "../../shared/db";
 import { appendReadAccessPredicate } from "../../shared/read-access";
-import { visibleTaskClause } from "../tasks/repository";
 
 export type EntryListOrder = "id_asc" | "updated_desc" | "created_asc";
 export type EntryListView = "brief" | "full";
@@ -226,7 +225,7 @@ export async function entryCounts(db: D1Database) {
     COALESCE(SUM(CASE WHEN e.archived = 0 AND e.read_version < v.version THEN 1 ELSE 0 END), 0) AS unread,
     COALESCE(SUM(CASE WHEN e.archived = 0 AND v.important = 1 AND e.read_version < v.version THEN 1 ELSE 0 END), 0) AS important_unread,
     COALESCE(SUM(e.archived), 0) AS archived,
-    (SELECT COUNT(*) FROM tasks WHERE done = 0 AND ${visibleTaskClause}) AS open_tasks
+    (SELECT COUNT(*) FROM tasks WHERE done = 0) AS open_tasks
     FROM entries e JOIN entry_versions v ON v.entry_id = e.id
       AND v.version = (SELECT MAX(version) FROM entry_versions WHERE entry_id = e.id)
   `).first<{ unread: number; important_unread: number; archived: number; open_tasks: number }>();
@@ -534,7 +533,7 @@ export async function patchEntryState(
   entryId: string,
   input: { archived?: boolean; read_version?: number; completed?: boolean },
   completedAt: string,
-): Promise<boolean> {
+): Promise<EntryStateDto | null> {
   const set: string[] = [];
   const bindings: unknown[] = [];
   const where = [
@@ -568,8 +567,9 @@ export async function patchEntryState(
 
   const result = await db.prepare(`
     UPDATE entries SET ${set.join(", ")} WHERE ${where.join(" AND ")}
-  `).bind(...bindings, ...whereBindings).run();
-  return (result.meta.changes ?? 0) === 1;
+    RETURNING archived, archived_at, read_version, completed, completed_at
+  `).bind(...bindings, ...whereBindings).first<StateRow>();
+  return result ? mapState(result) : null;
 }
 
 export async function findEntryState(db: D1Database, entryId: string): Promise<EntryStateDto | null> {

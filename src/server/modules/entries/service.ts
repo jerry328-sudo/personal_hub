@@ -23,7 +23,7 @@ import {
   resolveReadScope,
 } from "../../shared/authorize";
 import { isUniqueConstraintError } from "../../shared/db";
-import { AppError, badRequest, conflict, forbidden, notFound } from "../../shared/errors";
+import { AppError, badRequest, conflict, forbidden, notFound, serviceUnavailable } from "../../shared/errors";
 import { newEntityId, nowIso } from "../../shared/ids";
 import {
   cursorScopeFor,
@@ -357,7 +357,9 @@ export async function updateEntryState(
       throw badRequest("已读版本不能超过当前版本", { current_version: currentVersion });
     }
   }
-  const changed = await patchEntryState(ctx.env.DB, entryId, input, nowIso());
+  let changed: EntryStateDto | null;
+  try { changed = await patchEntryState(ctx.env.DB, entryId, input, nowIso()); }
+  catch { throw serviceUnavailable("暂时无法更新记录状态，请稍后再试"); }
   if (!changed) {
     const state = await findEntryState(ctx.env.DB, entryId);
     if (!state) throw notFound("条目不存在");
@@ -367,9 +369,7 @@ export async function updateEntryState(
     }
     throw conflict("条目状态在提交时发生变化，请刷新后重试");
   }
-  const state = await findEntryState(ctx.env.DB, entryId);
-  if (!state) throw notFound("条目不存在");
-  return state;
+  return changed;
 }
 
 export async function deleteEntry(ctx: ServiceContext, entryId: string): Promise<void> {

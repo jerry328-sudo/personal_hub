@@ -1,13 +1,16 @@
 import { env, exports } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
-import type { AgentDto, IssuedKeyDto } from "../../src/shared/contracts";
-import { createExecutionContext } from "cloudflare:test";
+import { afterEach, describe, expect, it } from "vitest";
+import type { AgentDto, IssuedKeyDto, Page, TaskDto } from "../../src/shared/contracts";
+import { applyD1Migrations, createExecutionContext } from "cloudflare:test";
 import worker from "../../src/server/index";
+import { PANEL_RESOURCE_URI, type PanelSnapshot } from "../../src/shared/panel";
 
 const origin = "http://localhost:5173";
 const secret = "test-admin-secret-with-sufficient-entropy";
 type Created = { agent: AgentDto; key: IssuedKeyDto };
-type RpcResult = { result?: { tools?: { name: string }[]; isError?: boolean; structuredContent?: { result: unknown }; content?: { type: string; text?: string; data?: string }[] }; error?: unknown };
+type RpcResult = { result?: { tools?: { name: string; title?: string; _meta?: Record<string, unknown> }[]; isError?: boolean; structuredContent?: { result?: unknown }; content?: { type: string; text?: string; data?: string }[];
+  _meta?: Record<string, unknown>; resources?: { uri: string }[];
+  contents?: { uri: string; mimeType?: string; text?: string; _meta?: Record<string, unknown> }[] }; error?: unknown };
 function hasWorker(value: object): value is { default: Fetcher } { return "default" in value; }
 async function request(path: string, init: RequestInit = {}): Promise<Response> {
   if (!hasWorker(exports)) throw new Error("Worker unavailable");
@@ -39,6 +42,188 @@ async function tool(token: string, name: string, args: unknown = {}): Promise<Rp
   return rpc(token, "tools/call", { name, arguments: args });
 }
 function value<T>(result: RpcResult): T { return result.result?.structuredContent?.result as T; }
+
+describe("Codex Hub MCP App", () => {
+  afterEach(async () => { await env.DB.prepare("UPDATE agents SET status = 'disabled' WHERE scope = 'all'").run(); });
+  it("clears completed tasks across pages within owner scope, preserving unfinished tasks and original entries", async () => {
+    const cookie = await login();
+    const first = await agent(cookie);
+    const second = await agent(cookie);
+    const linked = value<{ id: string }>(await tool(first.key.secret, "create_entry", { entry: { title: "Keep original", content: "Original body" } }));
+    await env.DB.prepare(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<105)
+      INSERT INTO tasks (id, agent_id, entry_id, title, done, created_at)
+      SELECT ? || i, ?, NULL, 'Completed', 1, '2026-10-06T00:00:00Z' FROM n`).bind(`bulk-${crypto.randomUUID()}-`, first.agent.id).run();
+    const pending = value<TaskDto>(await tool(first.key.secret, "create_task", { title: "Keep unfinished" }));
+    const archived = value<TaskDto>(await tool(first.key.secret, "create_task", { title: "Keep archived link", entry_id: linked.id }));
+    await env.DB.prepare("UPDATE tasks SET done=1 WHERE id=?").bind(archived.id).run();
+    await env.DB.prepare("UPDATE entries SET archived=1 WHERE id=?").bind(linked.id).run();
+    const peer = value<TaskDto>(await tool(second.key.secret, "create_task", { title: "Other owner" }));
+    await env.DB.prepare("UPDATE tasks SET done=1 WHERE id=?").bind(peer.id).run();
+    expect((await tool(first.key.secret, "clear_completed_tasks", { agent_id: second.agent.id })).result?.isError).toBe(true);
+    expect(value(await tool(first.key.secret, "clear_completed_tasks"))).toEqual({ cleared: 105 });
+    expect(value(await tool(first.key.secret, "clear_completed_tasks"))).toEqual({ cleared: 0 });
+    for (const id of [pending.id, peer.id]) expect(await env.DB.prepare("SELECT id FROM tasks WHERE id=?").bind(id).first()).not.toBeNull();
+    expect(await env.DB.prepare("SELECT id FROM tasks WHERE id=?").bind(archived.id).first()).toBeNull();
+    expect(await env.DB.prepare("SELECT id FROM entries WHERE id=?").bind(linked.id).first()).not.toBeNull();
+  });
+  it("returns a handled cleanup failure and keeps the API usable after a database write error", async () => {
+    const cookie = await login(); const source = await agent(cookie);
+    const task = value<TaskDto>(await tool(source.key.secret, "create_task", { title: "Cleanup failure fixture" }));
+    await env.DB.prepare("UPDATE tasks SET done=1 WHERE id=?").bind(task.id).run();
+    await env.DB.exec(`CREATE TRIGGER fail_cleanup BEFORE DELETE ON tasks WHEN OLD.id='${task.id}' BEGIN SELECT RAISE(ABORT, 'D1 quota failure fixture'); END;`);
+    try {
+      const response = await request("/api/v1/admin/tasks/completed/clear", json("POST", { agent_id: source.agent.id }, { Cookie: cookie, Origin: origin }));
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ error: { code: "service_unavailable", message: "暂时无法清除已完成待办，请稍后再试" } });
+      expect((await tool(source.key.secret, "clear_completed_tasks")).result?.isError).toBe(true);
+      expect(await env.DB.prepare("SELECT id FROM tasks WHERE id=?").bind(task.id).first()).not.toBeNull();
+      expect((await request(`/api/v1/admin/tasks?agent_id=${source.agent.id}`, { headers: { Cookie: cookie } })).status).toBe(200);
+    } finally { await env.DB.exec("DROP TRIGGER IF EXISTS fail_cleanup;"); }
+  });
+  it("cleans historical archived tasks of both states once and preserves unrelated tasks and records", async () => {
+    const cookie = await login(); const source = await agent(cookie);
+    const archived = value<{ id: string }>(await tool(source.key.secret, "create_entry", { entry: { title: "Historical archive", content: "Keep history" } }));
+    const current = value<{ id: string }>(await tool(source.key.secret, "create_entry", { entry: { title: "Active record", content: "Keep active" } }));
+    await env.DB.exec("DROP TRIGGER delete_tasks_on_archive; DROP TRIGGER reject_archived_task_insert; DROP INDEX tasks_entry_id;");
+    const make = async (title: string, entry_id?: string) => value<TaskDto>(await tool(source.key.secret, "create_task", { title, ...(entry_id ? { entry_id } : {}) }));
+    const open = await make("Old hidden unfinished", archived.id);
+    const done = await make("Old hidden completed", archived.id);
+    const active = await make("Keep active task", current.id);
+    const standalone = await make("Keep standalone");
+    await env.DB.prepare("UPDATE tasks SET done=1 WHERE id=?").bind(done.id).run();
+    await env.DB.prepare("UPDATE entries SET archived=1 WHERE id=?").bind(archived.id).run();
+    const migration = env.TEST_MIGRATIONS.find((item) => item.name.includes("0007"))!;
+    await applyD1Migrations(env.DB, [{ name: "cleanup-history-test", queries: migration.queries }]);
+    const plan = await env.DB.prepare("EXPLAIN QUERY PLAN DELETE FROM tasks WHERE entry_id = ?").bind(archived.id).all<{ detail: string }>();
+    expect(plan.results.map((row) => row.detail).join(" ")).toContain("tasks_entry_id");
+    for (const id of [open.id, done.id]) expect(await env.DB.prepare("SELECT id FROM tasks WHERE id=?").bind(id).first()).toBeNull();
+    for (const id of [active.id, standalone.id]) expect(await env.DB.prepare("SELECT id FROM tasks WHERE id=?").bind(id).first()).not.toBeNull();
+    for (const id of [archived.id, current.id]) expect(await env.DB.prepare("SELECT id FROM entries WHERE id=?").bind(id).first()).not.toBeNull();
+    expect((await tool(source.key.secret, "create_task", { title: "Reject old client", entry_id: archived.id })).result?.isError).toBe(true);
+    // The cleanup DELETE also includes old archived rows if applied independently.
+    await env.DB.exec("DROP TRIGGER reject_archived_task_insert;");
+    await env.DB.prepare("INSERT INTO tasks(id, agent_id, entry_id, title, done, created_at) VALUES (?, ?, ?, 'Legacy done', 1, '2026-10-06T00:00:00Z')").bind(`legacy-${crypto.randomUUID()}`, source.agent.id, archived.id).run();
+    expect(value(await tool(source.key.secret, "clear_completed_tasks"))).toEqual({ cleared: 1 });
+    await env.DB.prepare(migration.queries.find((query) => query.includes("CREATE TRIGGER reject_archived_task_insert"))!).run();
+  });
+  it("rolls back archive state and every linked deletion on failure and blocks direct archived inserts", async () => {
+    const cookie = await login(); const source = await agent(cookie); const manager = await agent(cookie, { role: "manager" });
+    const entry = value<{ id: string }>(await tool(source.key.secret, "create_entry", { entry: { title: "Atomic archive", content: "Keep original" } }));
+    const first = value<TaskDto>(await tool(source.key.secret, "create_task", { title: "First", entry_id: entry.id }));
+    const second = value<TaskDto>(await tool(source.key.secret, "create_task", { title: "Second", entry_id: entry.id }));
+    await env.DB.exec(`CREATE TRIGGER fail_archive_delete BEFORE DELETE ON tasks WHEN OLD.id='${second.id}' BEGIN SELECT RAISE(ABORT, 'D1 write failure'); END;`);
+    try {
+      expect((await tool(manager.key.secret, "update_entry_state", { id: entry.id, state: { archived: true } })).result?.isError).toBe(true);
+      expect((await env.DB.prepare("SELECT archived FROM entries WHERE id=?").bind(entry.id).first<{ archived: number }>())?.archived).toBe(0);
+      for (const id of [first.id, second.id]) expect(await env.DB.prepare("SELECT id FROM tasks WHERE id=?").bind(id).first()).not.toBeNull();
+    } finally { await env.DB.exec("DROP TRIGGER fail_archive_delete;"); }
+    expect((await tool(manager.key.secret, "update_entry_state", { id: entry.id, state: { archived: true } })).result?.isError).not.toBe(true);
+    await expect(env.DB.prepare("INSERT INTO tasks(id, agent_id, entry_id, title, done, created_at) VALUES ('blocked-direct', ?, ?, 'Blocked', 0, '2026-10-06T00:00:00Z')").bind(source.agent.id, entry.id).run()).rejects.toThrow("archived_entry_task");
+  });
+  it("matches website tasks across roles after archive deletion; legacy archive flags no longer change pagination", async () => {
+    const cookie = await login();
+    const source = await agent(cookie, { name: "Task parity source" });
+    const manager = await agent(cookie, { role: "manager", name: "Task parity manager" });
+    const archived = value<{ id: string }>(await tool(source.key.secret, "create_entry", { entry: { title: "Archived source", content: "history" } }));
+    const active = value<{ id: string }>(await tool(source.key.secret, "create_entry", { entry: { title: "Active source", content: "current" } }));
+    const create = async (title: string, entry_id?: string) => value<TaskDto>(await tool(source.key.secret, "create_task", { title, ...(entry_id ? { entry_id } : {}) }));
+    const hidden = await create("archived open", archived.id);
+    const done = await create("completed", active.id);
+    await tool(source.key.secret, "update_task", { id: done.id, task: { done: true } });
+    const linked = await create("current open", active.id);
+    const standalone = await create("standalone");
+    await tool(manager.key.secret, "update_entry_state", { id: archived.id, state: { archived: true } });
+    const query = { agent_id: source.agent.id, done: "no", include_archived: "no", limit: 1 };
+    const first = value<Page<TaskDto>>(await tool(manager.key.secret, "list_tasks", query));
+    expect(first.items).toHaveLength(1); expect(first.next_cursor).toBeTruthy();
+    const second = value<Page<TaskDto>>(await tool(manager.key.secret, "list_tasks", { ...query, cursor: first.next_cursor }));
+    expect([...first.items, ...second.items].map((item) => item.id).sort()).toEqual([linked.id, standalone.id].sort());
+    expect(second.next_cursor).toBeNull();
+    const webResponse = await request(`/api/v1/admin/tasks?agent_id=${source.agent.id}&done=no`, { headers: { Cookie: cookie } });
+    const web = await webResponse.json() as Page<TaskDto>;
+    expect(web.items.map((item) => item.id).sort()).toEqual([linked.id, standalone.id].sort());
+    const history = value<Page<TaskDto>>(await tool(manager.key.secret, "list_tasks", { agent_id: source.agent.id, done: "all" }));
+    expect(history.items.map((item) => item.id).sort()).toEqual([done.id, linked.id, standalone.id].sort());
+    expect((await tool(manager.key.secret, "list_tasks", { ...query, include_archived: "yes", cursor: first.next_cursor })).result?.isError).not.toBe(true);
+    expect(await env.DB.prepare("SELECT id FROM tasks WHERE id=?").bind(hidden.id).first()).toBeNull();
+    expect((await tool(source.key.secret, "create_task", { title: "Cannot recreate hidden task", entry_id: archived.id })).result?.isError).toBe(true);
+    await tool(manager.key.secret, "update_entry_state", { id: archived.id, state: { archived: false } });
+    const restored = value<Page<TaskDto>>(await tool(manager.key.secret, "list_tasks", { ...query, limit: 100 }));
+    expect(restored.items.map((item) => item.id).sort()).toEqual([linked.id, standalone.id].sort());
+  });
+  it("advertises navigation and thread entrypoints, serves isolated HTML and returns authorized launch data", async () => {
+    const cookie = await login();
+    const source = await agent(cookie, { name: "Panel source", display_mode: "report" });
+    const manager = await agent(cookie, { role: "manager", name: "Panel manager" });
+    const created = value<{ id: string }>(await tool(manager.key.secret, "create_entry", {
+      agent_id: source.agent.id, entry: { title: "Panel version", content: "Private panel body" },
+    }));
+    const listed = (await rpc(manager.key.secret, "tools/list")).result!.tools!.find((item) => item.name === "open_hub_panel")!;
+    expect(listed.title).toBe("Personal Hub");
+    expect(listed._meta?.ui).toEqual({ resourceUri: PANEL_RESOURCE_URI, visibility: ["model", "app"] });
+    expect(listed._meta?.["openai/ui"]).toEqual({ entrypoints: [{ type: "global" }, { type: "thread" }] });
+    const opened = (await tool(manager.key.secret, "open_hub_panel")).result!;
+    const snapshot = opened._meta!.personalHub as PanelSnapshot;
+    expect(snapshot.identity).toMatchObject({ role: "manager", can_manage_entries: true, can_manage_sources: true, can_write: true });
+    expect(snapshot.sources.items.some((item) => item.id === source.agent.id)).toBe(true);
+    expect(snapshot.entries.items.some((item) => item.id === created.id)).toBe(true);
+    expect(snapshot.entry?.content).toBe("Private panel body");
+    expect(JSON.stringify(opened.structuredContent)).not.toContain("Private panel body");
+    expect(JSON.stringify(opened.content)).not.toContain("Private panel body");
+    expect(JSON.stringify(opened)).not.toContain(manager.key.secret);
+    expect((await rpc(manager.key.secret, "resources/list")).result!.resources).toContainEqual(expect.objectContaining({ uri: PANEL_RESOURCE_URI }));
+    const resource = (await rpc(manager.key.secret, "resources/read", { uri: PANEL_RESOURCE_URI })).result!.contents![0]!;
+    expect(resource.mimeType).toBe("text/html;profile=mcp-app");
+    expect(resource.text).toContain("Personal Hub");
+    expect(resource.text).not.toContain(manager.key.secret);
+    expect(resource.text).not.toContain(secret);
+    expect(resource.text?.split("<script>")[0]).not.toMatch(/<script[^>]+src=/);
+    expect(resource.text).not.toContain('src="./main.tsx"');
+    expect(resource._meta?.["openai/ui"]).toEqual({ availableDisplayModes: ["fullscreen"], preferredDisplayMode: "fullscreen" });
+  });
+  it("caches public documentation encoding by role without changing client response formats", async () => {
+    const cookie = await login(); const manager = await agent(cookie, { role: "manager" });
+    const reader = await agent(cookie, { role: "reader", read_access: { mode: "all" } });
+    const first = await tool(manager.key.secret, "get_api_documentation");
+    const second = await tool(manager.key.secret, "get_api_documentation");
+    const readonly = await tool(reader.key.secret, "get_api_documentation");
+    expect(first.result?.content).toEqual(second.result?.content);
+    expect(JSON.parse(first.result!.content![0]!.text!)).toBe(value<string>(first));
+    expect(value<string>(readonly)).not.toEqual(value<string>(first));
+    expect(value<string>(readonly)).not.toContain("/api/v1/admin/agents");
+    expect(JSON.stringify(first)).not.toContain(manager.key.secret);
+  });
+  it("keeps reader launch data source-scoped and supplies no write capabilities", async () => {
+    const cookie = await login(); const source = await agent(cookie); const hidden = await agent(cookie);
+    const reader = await agent(cookie, { role: "reader", read_access: { mode: "selected", agent_ids: [source.agent.id] } });
+    await tool(source.key.secret, "create_entry", { entry: { title: "Readable panel record", content: "Allowed body" } });
+    const privateEntry = value<{ id: string }>(await tool(hidden.key.secret, "create_entry", { entry: { title: "Hidden record", content: "Hidden body" } }));
+    const snapshot = (await tool(reader.key.secret, "open_hub_panel")).result!._meta!.personalHub as PanelSnapshot;
+    expect(snapshot.identity).toMatchObject({ role: "reader", can_write: false, can_manage_entries: false, can_manage_sources: false });
+    expect(snapshot.sources.items.map((item) => item.id)).toEqual([source.agent.id]);
+    expect(snapshot.entries.items.every((item) => item.agent_id === source.agent.id)).toBe(true);
+    expect(JSON.stringify(snapshot)).not.toContain(privateEntry.id);
+    expect(snapshot.entry?.content).toBe("Allowed body");
+    expect((await tool(reader.key.secret, "update_entry_state", { id: snapshot.entry!.id, state: { archived: true } })).result?.isError).toBe(true);
+  });
+  it("makes a manager's read-only OAuth connection read-only in the panel", async () => {
+    const cookie = await login(); const manager = await agent(cookie, { role: "manager" });
+    const tokens = await authorize(cookie, manager.agent.id, ["hub:read", "offline_access"]);
+    const snapshot = (await tool(tokens.access_token, "open_hub_panel")).result!._meta!.personalHub as PanelSnapshot;
+    expect(snapshot.identity).toMatchObject({ role: "manager", can_write: false, can_manage_entries: false, can_manage_sources: false });
+    const names = (await rpc(tokens.access_token, "tools/list")).result!.tools!.map((item) => item.name);
+    expect(names).toContain("open_hub_panel"); expect(names).not.toContain("update_entry_state");
+  });
+  it("rejects the app and its resources after key revocation", async () => {
+    const cookie = await login(); const manager = await agent(cookie, { role: "manager" });
+    expect((await tool(manager.key.secret, "open_hub_panel")).result?.isError).not.toBe(true);
+    await request(`/api/v1/admin/agents/${manager.agent.id}/keys/${manager.key.id}`, { method: "DELETE", headers: { Cookie: cookie, Origin: origin } });
+    const response = await request("/mcp", json("POST", { jsonrpc: "2.0", id: 1, method: "resources/read", params: { uri: PANEL_RESOURCE_URI } }, {
+      Authorization: `Bearer ${manager.key.secret}`, Accept: "application/json, text/event-stream",
+    }));
+    expect(response.status).toBe(401);
+  });
+});
 async function registration(name = "MCP integration"): Promise<string> {
   const response = await request("/oauth/register", json("POST", {
     client_name: name, redirect_uris: ["https://client.example/callback"],
@@ -83,6 +268,31 @@ async function authorize(cookie: string, identity: string, scopes: string[], key
 }
 
 describe("additive MCP transport and existing API compatibility", () => {
+  it("applies SDK input defaults, trimming and coercion while rejecting refinements and unknown fields", async () => {
+    const cookie = await login();
+    const created = await agent(cookie);
+    const token = created.key.secret;
+    const entry = value<{ id: string }>(await tool(token, "create_entry", {
+      entry: { title: "  Trimmed title  ", content: "Default flags" },
+    }));
+    const stored = value<{ title: string; important: boolean }>(await tool(token, "get_entry", { id: entry.id }));
+    expect(stored.title).toBe("Trimmed title");
+    expect(stored.important).toBe(false);
+    await tool(token, "create_entry", { entry: { title: "Another", content: "Another body" } });
+    const page = value<{ items: { id: string }[]; next_cursor: string | null }>(await tool(token, "list_entries", { limit: "1" }));
+    expect(page.items).toHaveLength(1);
+    expect(page.next_cursor).toBeTruthy();
+    for (const invalidEntry of [
+      { title: " ", content: "Invalid title" },
+      { title: "Invalid URL", content: "Body", url: "ftp://example.com/file" },
+      { title: "Too large", content: "a".repeat(256 * 1024 + 1) },
+    ]) expect((await tool(token, "create_entry", { entry: invalidEntry })).result?.isError).toBe(true);
+    expect((await tool(token, "get_entry", { id: entry.id, unexpected: true })).result?.isError).toBe(true);
+    expect((await tool(token, "append_entry_version", {
+      id: entry.id, entry: { title: "Invalid version", content: "Body", base_version: 0 },
+    })).result?.isError).toBe(true);
+    expect(value<{ items: unknown[] }>(await tool(token, "list_entries")).items).toHaveLength(2);
+  });
   it("initializes with an existing key, lists tools, shares versions with API and rejects stale snapshots", async () => {
     const cookie = await login(); const created = await agent(cookie); const token = created.key.secret;
     const init = await rpc(token, "initialize", { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" } });
@@ -230,8 +440,8 @@ describe("OAuth authorization and live permission checks", () => {
     expect((await tool(admin, "list_agent_keys", { id: created.agent.id })).result?.isError).not.toBe(true);
     await tool(admin, "revoke_agent_key", { id: created.agent.id, key_id: key.id });
     const entry = value<{ id: string }>(await tool(admin, "create_entry", { agent_id: created.agent.id, entry: { title: "Admin entry", content: "full body" } }));
-    const state = value<{ completed: boolean; archived: boolean }>(await tool(admin, "update_entry_state", { id: entry.id, state: { completed: true, archived: true } }));
-    expect(state.completed).toBe(true); expect(state.archived).toBe(true);
+    const state = value<{ completed: boolean; archived: boolean }>(await tool(admin, "update_entry_state", { id: entry.id, state: { completed: true } }));
+    expect(state.completed).toBe(true); expect(state.archived).toBe(false);
     const task = value<{ id: string }>(await tool(admin, "create_task", { agent_id: created.agent.id, entry_id: entry.id, title: "Linked" }));
     await tool(admin, "delete_entry", { id: entry.id });
     expect((await tool(admin, "delete_task", { id: task.id })).result?.isError).not.toBe(true);

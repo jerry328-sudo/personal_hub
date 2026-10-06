@@ -171,7 +171,7 @@ export function EntryReader({ entryId, agents, onChanged, onBack, embedded = fal
           {entry.completed ? <RotateCcw aria-hidden="true" /> : <CircleCheck aria-hidden="true" />}
           {entry.completed ? "恢复未完成" : "标为已完成"}
         </button>
-        <button className="btn" type="button" disabled={busy} onClick={() => void mutateState({ archived: !entry.archived }, entry.archived ? "已移出归档" : "已归档") }>
+        <button className="btn" type="button" title={entry.archived ? "取消归档不会恢复已删除的待办" : "归档会删除该记录关联的全部待办"} disabled={busy} onClick={() => void mutateState({ archived: !entry.archived }, entry.archived ? "已移出归档" : "已归档，关联待办已删除") }>
           {entry.archived ? <ArchiveRestore aria-hidden="true" /> : <Archive aria-hidden="true" />}
           {entry.archived ? "取消归档" : "归档"}
         </button>

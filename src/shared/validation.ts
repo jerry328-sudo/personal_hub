@@ -135,9 +135,17 @@ export const markReadQuerySchema = entryQueryObject.omit({ cursor: true, limit: 
 export const taskQuerySchema = z.object({
   agent_id: z.string().min(1).optional(),
   done: z.enum(["all", "yes", "no"]).optional(),
+  // Legacy clients may send this flag; archive cleanup removes the need to filter.
+  include_archived: z.enum(["yes", "no"]).optional(),
   cursor: z.string().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(LIMITS.maxPageSize).optional(),
 }).strict();
 
 export type EntryQuery = z.infer<typeof entryQuerySchema>;
 export type TaskQuery = z.infer<typeof taskQuerySchema>;
+
+// Bulk cleanup targets all completed tasks across all pages.
+export const completedTasksScopeSchema = z.object({
+  agent_id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(),
+}).strict();
+export type CompletedTasksScope = z.infer<typeof completedTasksScopeSchema>;

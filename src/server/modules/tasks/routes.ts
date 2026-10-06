@@ -5,6 +5,7 @@ import {
   createTaskSchema,
   patchTaskSchema,
   taskQuerySchema,
+  completedTasksScopeSchema,
 } from "../../../shared/validation";
 import type { AppContext, AppEnv } from "../../env";
 import { serviceContext } from "../../env";
@@ -19,6 +20,7 @@ import {
   deleteTask,
   listTasks,
   updateTask,
+  clearCompletedTasks,
 } from "./service";
 
 function setPrivateResponseHeaders(c: AppContext): void {
@@ -62,6 +64,13 @@ export const readerTaskListHandler: Handler<AppEnv> = async (c) => {
 };
 
 export function registerTaskRoutes(app: Hono<AppEnv>): void {
+  app.post("/api/v1/admin/tasks/completed/clear", requireManagementAccess(), async (c) => {
+    requireAdminWriteOrigin(c);
+    setPrivateResponseHeaders(c);
+    const parsed = completedTasksScopeSchema.safeParse(await readLimitedJson(c.req.raw, LIMITS.jsonRequestBytes));
+    if (!parsed.success) throw badRequest("清除范围无效");
+    return c.json(await clearCompletedTasks(serviceContext(c), parsed.data));
+  });
   app.get("/api/v1/agent/tasks", requireAgentRole(["agent"]), async (c) => {
     setPrivateResponseHeaders(c);
     return c.json(await listTasks(serviceContext(c), parseQuery(c)));

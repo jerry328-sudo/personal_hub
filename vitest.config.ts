@@ -7,6 +7,7 @@ export default defineConfig({
     cloudflareTest(async () => ({
       wrangler: { configPath: "./wrangler.jsonc" },
       miniflare: {
+        assets: { directory: path.resolve(import.meta.dirname, "public"), binding: "ASSETS" },
         bindings: {
           ADMIN_LOGIN_SECRET: "test-admin-secret-with-sufficient-entropy",
           AUTH_PEPPER: "test-auth-pepper-with-different-entropy",

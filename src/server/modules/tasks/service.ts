@@ -5,7 +5,7 @@ import type {
   TaskDto,
 } from "../../../shared/contracts";
 import { LIMITS } from "../../../shared/limits";
-import type { TaskQuery } from "../../../shared/validation";
+import type { CompletedTasksScope, TaskQuery } from "../../../shared/validation";
 import type { ServiceContext } from "../../env";
 import {
   assertCanWriteOwner,
@@ -18,7 +18,7 @@ import {
   resolveReadScope,
   type ReaderScope,
 } from "../../shared/authorize";
-import { badRequest, conflict, forbidden, notFound } from "../../shared/errors";
+import { badRequest, conflict, forbidden, notFound, serviceUnavailable } from "../../shared/errors";
 import { newEntityId, nowIso } from "../../shared/ids";
 import { cursorScopeFor, decodeCursor, encodeCursor, queryFingerprint } from "../../shared/pagination";
 import { findReadableSource } from "../readers/repository";
@@ -30,6 +30,7 @@ import {
   listTasks as listTaskRecords,
   patchTask,
   taskDto,
+  clearCompletedTasks as clearCompletedTaskRecords,
 } from "./repository";
 
 /** 只读身份不能复用这个入口：待办写入一律要求可写角色。 */
@@ -82,20 +83,15 @@ export async function listTasks(ctx: ServiceContext, query: TaskQuery): Promise<
   const agentId = readerAccess === null ? effectiveOwnerForRead(ctx, query.agent_id) : query.agent_id;
   const done = query.done === "yes" ? true : query.done === "no" ? false : undefined;
   const limit = query.limit ?? LIMITS.defaultPageSize;
-  // 只读身份保留授权来源的已完成和归档关联记录，便于汇总与去重，
-  // 因此只有管理员才按网页规则隐藏归档条目。
-  const excludeArchivedEntries = ctx.actor.type === "admin";
   const fingerprint = queryFingerprint({
     agentId: agentId ?? null,
     done: query.done ?? "all",
-    excludeArchivedEntries,
     order: "id_asc",
   });
   const cursor = decodeCursor(query.cursor, fingerprint, cursorScopeFor(ctx.actor));
   if (cursor !== null && cursor.length !== 1) throw badRequest("分页游标无效");
 
   const rows = await listTaskRecords(ctx.env.DB, {
-    excludeArchivedEntries,
     ...(agentId === undefined ? {} : { agentId }),
     ...(readerAccess === null ? {} : { readerAccess }),
     ...(done === undefined ? {} : { done }),
@@ -207,4 +203,14 @@ export async function deleteTask(ctx: ServiceContext, id: string): Promise<void>
     isManagementActor(ctx.actor) ? "not_deleting" : "active",
   );
   if (!deleted) throw notFound("待办不存在");
+}
+
+export async function clearCompletedTasks(ctx: ServiceContext, input: CompletedTasksScope): Promise<{ cleared: number }> {
+  const ownerId = effectiveOwnerForRead(ctx, input.agent_id);
+  try {
+    return { cleared: await clearCompletedTaskRecords(ctx.env.DB, ownerId, isManagementActor(ctx.actor) ? "not_deleting" : "active") };
+  } catch {
+    // Translate database/quota failures into a handled response without leaking SQL.
+    throw serviceUnavailable("暂时无法清除已完成待办，请稍后再试");
+  }
 }

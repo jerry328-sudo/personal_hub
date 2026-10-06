@@ -241,6 +241,9 @@ export interface TaskListQuery {
 }
 
 export const tasksApi = {
+  clearCompleted: (agent_id?: string) => requestJson<{ cleared: number }>("/api/v1/admin/tasks/completed/clear", {
+    method: "POST", body: jsonBody({ agent_id }),
+  }),
   list: (query: TaskListQuery = {}, signal?: AbortSignal) =>
     requestJson<Page<TaskDto>>(withQuery("/api/v1/admin/tasks", query), { signal }),
   create: (input: CreateTaskInput) => requestJson<TaskDto>("/api/v1/admin/tasks", {

@@ -24,6 +24,7 @@ try {
   const panel = page.frameLocator("#panel");
   await panel.getByRole("button", { name: "打开：铅酸电池稿件：讨论部分修订", exact: true }).waitFor();
   await panel.getByRole("heading", { name: "本轮更新", exact: true }).waitFor();
+  assert.equal(await panel.getByRole("region", { name: "已选引用" }).count(), 0, "未选择记录时不应占用底部托盘空间");
   await panel.getByRole("navigation").getByRole("button", { name: "待办", exact: true }).click();
   await panel.getByRole("checkbox", { name: "完成待办：核对讨论部分的实验依据", exact: true }).waitFor();
   assert.equal(await panel.locator(".task-row").count(), 3, "待办默认应与网页一致，仅显示未完成且未关联归档条目的三项");
@@ -64,7 +65,7 @@ try {
   await panel.getByRole("button", { name: "附到聊天", exact: true }).click();
   await until(async () => JSON.parse(await page.locator("#context-text").textContent()).structuredContent.records[0]?.version === 1, "附件版本错误");
   await page.getByRole("button", { name: "移除引用", exact: true }).click();
-  await until(() => panel.getByRole("region", { name: "已选引用" }).innerText().then((text) => text.includes("已选 0 条")), "未同步宿主引用移除");
+  await until(() => panel.getByRole("region", { name: "已选引用" }).count().then((count) => count === 0), "移除最后一项引用后应同步收起底部托盘");
   await panel.getByRole("button", { name: "打开：研究记录 02", exact: true }).click();
   await panel.getByRole("heading", { name: "研究记录 02", exact: true }).waitFor();
   await panel.getByRole("button", { name: "打开：铅酸电池稿件：讨论部分修订", exact: true }).click();
@@ -129,6 +130,8 @@ try {
   await check(() => panel.locator(".list-pane").evaluate((node) => node.getBoundingClientRect().width <= 441), "宽屏列表按百分比过度扩张");
   await check(() => panel.locator(".hub-app").evaluate((node) => Math.abs(node.getBoundingClientRect().height - node.ownerDocument.defaultView.innerHeight) < 2), "面板未填满宿主高度");
   await page.locator("#panel").screenshot({ path: `${output}/dark-hover.jpg`, type: "jpeg", quality: 92 });
+  await panel.getByRole("checkbox", { name: "选择：铅酸电池稿件：讨论部分修订", exact: true }).click();
+  await panel.getByRole("region", { name: "已选引用" }).waitFor();
   await page.setViewportSize({ width: 620, height: 460 });
   await until(() => panel.locator(".hub-app").evaluate((node) => Math.abs(node.getBoundingClientRect().height - node.ownerDocument.defaultView.innerHeight) < 2 && node.ownerDocument.documentElement.scrollHeight === node.ownerDocument.documentElement.clientHeight), "短面板最小高度导致裁切");
   await until(() => panel.getByRole("region", { name: "已选引用" }).evaluate((node) => node.getBoundingClientRect().bottom <= node.ownerDocument.defaultView.innerHeight), "短面板底部引用托盘被裁切");

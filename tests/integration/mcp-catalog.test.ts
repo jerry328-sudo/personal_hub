@@ -10,9 +10,9 @@ import { entryQuerySchema, createEntrySchema } from "../../src/shared/validation
 import { HUB_ICONS } from "../../src/shared/hub-icon";
 
 const readTools = ["open_hub_panel", "get_identity", "get_api_documentation", "list_agents", "list_entries", "get_entry",
-  "list_entry_versions", "get_entry_version", "list_tasks", "get_image"];
+  "list_entry_versions", "get_entry_version", "list_tasks", "list_task_tags", "get_image"];
 const writeTools = ["create_entry", "append_entry_version", "create_task", "update_task", "delete_task", "clear_completed_tasks", "upload_image"];
-const managementWriteTools = ["mark_entries_read", "update_entry_state", "delete_entry"];
+const managementWriteTools = ["create_task_tag", "update_task_tag", "delete_task_tag", "mark_entries_read", "update_entry_state", "delete_entry"];
 const adminTools = ["create_agent", "update_agent", "set_agent_status", "purge_agent", "list_agent_keys", "issue_agent_key",
   "revoke_agent_key", "get_read_access", "set_read_access", "list_passkeys", "revoke_passkey", "change_admin_secret"];
 const oauthTools = ["list_oauth_grants", "revoke_oauth_grant"];

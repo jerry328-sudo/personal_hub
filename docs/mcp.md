@@ -57,6 +57,7 @@ Codex 插件的 `open_hub_panel` 和 MCP App HTML 资源已于 2026-10-05 部署
 | 条目与版本 | `list_entries`, `get_entry`, `list_entry_versions`, `get_entry_version`, `create_entry`, `append_entry_version` |
 | 管理员内容处理 | `get_entry_counts`, `mark_entries_read`, `update_entry_state`, `delete_entry` |
 | 待办 | `list_tasks`, `clear_completed_tasks`, `create_task`, `update_task`, `delete_task` |
+| 待办标签 | `list_task_tags`, `create_task_tag`, `update_task_tag`, `delete_task_tag` |
 | Agent 生命周期 | `create_agent`, `update_agent`, `set_agent_status`, `purge_agent`, `report_run` |
 | Agent 密钥 | `list_agent_keys`, `issue_agent_key`, `revoke_agent_key` |
 | 只读来源授权 | `get_read_access`, `set_read_access` |
@@ -66,7 +67,9 @@ Codex 插件的 `open_hub_panel` 和 MCP App HTML 资源已于 2026-10-05 部署
 
 `list_tasks` 支持 `done=all|yes|no`，面板默认 `done=no`。归档记录会直接删除全部关联待办（包括未完成的）；取消归档不会恢复。迁移 `0007_archive_task_cleanup.sql` 一次性清除历史归档关联待办，禁止向已归档记录新建待办。所有身份使用相同查询，保留来源授权和分页；旧 `include_archived=yes|no` 参数兼容接收，但不再改变结果或游标范围。查询和计数不再关联 entries 检查隐藏状态。
 
-`clear_completed_tasks` 接受可选 `agent_id`，只面向可写身份；普通 Agent 仅能处理自身来源。清除覆盖所有分页的已完成待办（包括旧归档关联项），保留未完成待办和原始记录。确认弹窗只显示来源范围，不查询预估数量。网页版对应 `POST /api/v1/admin/tasks/completed/clear`。业务数据库操作为一次原子 DELETE，不逐项删除、不自动重试，成功后用 meta.changes 报告数量。旧计数工具和 HTTP 计数接口已移除。数据库失败转为受控 `service_unavailable`；前端保留列表并恢复按钮。配额耗尽仍会影响其他数据库请求，不能由捕获异常恢复配额。
+待办支持多个全局标签。管理员和总管可管理标签目录；普通 Agent 可给自己的待办使用已有标签；只读身份仅能读取授权待办涉及的标签。创建待办使用 `tag_ids`，修改使用 `add_tag_ids` / `remove_tag_ids`，省略不改变原关联。删除标签保留待办和其他标签。完整字段、权限与界面操作见[待办标签](task-tags.md)。
+
+`clear_completed_tasks` 接受可选 `agent_id`、`tag_id` 或 `untagged=yes`，只面向可写身份；普通 Agent 仅能处理自身来源。清除覆盖所有分页中符合来源和标签条件的已完成待办（包括旧归档关联项），保留未完成待办和原始记录。搜索文字不限制清除范围，确认弹窗显示来源及标签范围，不查询预估数量。网页版对应 `POST /api/v1/admin/tasks/completed/clear`。业务数据库操作为一次原子 DELETE，不逐项删除、不自动重试，成功后按 RETURNING 的待办行数报告数量，不把级联删除的标签关联计入。旧计数工具和 HTTP 计数接口已移除。数据库失败转为受控 `service_unavailable`；前端保留列表并恢复按钮。配额耗尽仍会影响其他数据库请求，不能由捕获异常恢复配额。
 
 普通 Agent 的 create_entry/upload_image 自动使用自身归属；总管和管理员须指定 agent_id。总管可调用全部管理工具，包括删除、Agent/密钥管理、来源授权、通行密钥撤销、管理员登录密钥修改及 OAuth 授权管理。修改登录密钥仍须验证当前登录密钥。总管保持原身份，版本和附件仍记录其 Agent ID。永久删除 Agent 可能返回 pending，继续调用至 done。
 

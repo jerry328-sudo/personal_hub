@@ -22,6 +22,7 @@ import { badRequest, conflict, forbidden, notFound, serviceUnavailable } from ".
 import { newEntityId, nowIso } from "../../shared/ids";
 import { cursorScopeFor, decodeCursor, encodeCursor, queryFingerprint } from "../../shared/pagination";
 import { findReadableSource } from "../readers/repository";
+import { tagsForTasks, validateTaskTags } from "../task-tags/service";
 import {
   deleteTask as deleteTaskRecord,
   findEntryOwner,
@@ -84,6 +85,8 @@ export async function listTasks(ctx: ServiceContext, query: TaskQuery): Promise<
   const done = query.done === "yes" ? true : query.done === "no" ? false : undefined;
   const limit = query.limit ?? LIMITS.defaultPageSize;
   const fingerprint = queryFingerprint({
+    tagId: query.tag_id ?? null,
+    untagged: query.untagged === "yes",
     agentId: agentId ?? null,
     done: query.done ?? "all",
     order: "id_asc",
@@ -92,6 +95,8 @@ export async function listTasks(ctx: ServiceContext, query: TaskQuery): Promise<
   if (cursor !== null && cursor.length !== 1) throw badRequest("分页游标无效");
 
   const rows = await listTaskRecords(ctx.env.DB, {
+    tagId: query.tag_id,
+    untagged: query.untagged === "yes",
     ...(agentId === undefined ? {} : { agentId }),
     ...(readerAccess === null ? {} : { readerAccess }),
     ...(done === undefined ? {} : { done }),
@@ -101,9 +106,10 @@ export async function listTasks(ctx: ServiceContext, query: TaskQuery): Promise<
   const hasMore = rows.length > limit;
   const visibleRows = hasMore ? rows.slice(0, limit) : rows;
   const last = visibleRows.at(-1);
+  const tags = await tagsForTasks(ctx.env.DB, visibleRows.map((row) => row.id));
 
   return {
-    items: visibleRows.map(taskDto),
+    items: visibleRows.map((row) => taskDto(row, tags.get(row.id))),
     next_cursor: hasMore && last
       ? encodeCursor([last.id], fingerprint, cursorScopeFor(ctx.actor))
       : null,
@@ -148,18 +154,20 @@ async function resolveCreateOwner(
 
 export async function createTask(ctx: ServiceContext, input: CreateTaskInput): Promise<TaskDto> {
   const { ownerId, entryId } = await resolveCreateOwner(ctx, input);
-  const row = await insertTask(ctx.env.DB, {
+  await validateTaskTags(ctx.env.DB, input.tag_ids ?? []);
+  const row = await withTagConflict(() => insertTask(ctx.env.DB, {
+    tagIds: input.tag_ids,
     id: newEntityId("task"),
     agentId: ownerId,
     entryId,
     title: input.title,
     dueAt: input.due_at ?? null,
     createdAt: nowIso(),
-  }, isManagementActor(ctx.actor));
+  }, isManagementActor(ctx.actor)));
   if (!row) {
     throw conflict("目标 Agent 或关联条目的状态已变化，请刷新后重试");
   }
-  return taskDto(row);
+  return taskDto(row, (await tagsForTasks(ctx.env.DB, [row.id])).get(row.id));
 }
 
 function taskOwnerFilter(ctx: ServiceContext): string | undefined {
@@ -179,14 +187,17 @@ export async function updateTask(
   const existing = await findTask(ctx.env.DB, id, ownerFilter);
   if (!existing) throw notFound("待办不存在");
   assertCanWriteOwner(ctx.actor, existing.agent_id);
+  await validateTaskTags(ctx.env.DB, input.add_tag_ids ?? []);
 
-  const row = await patchTask(ctx.env.DB, id, ownerFilter, {
+  const row = await withTagConflict(() => patchTask(ctx.env.DB, id, ownerFilter, {
+    addTagIds: input.add_tag_ids,
+    removeTagIds: input.remove_tag_ids,
     ...(input.title === undefined ? {} : { title: input.title }),
     ...(input.due_at === undefined ? {} : { dueAt: input.due_at }),
     ...(input.done === undefined ? {} : { done: input.done }),
-  }, isManagementActor(ctx.actor) ? "not_deleting" : "active");
+  }, isManagementActor(ctx.actor) ? "not_deleting" : "active"));
   if (!row) throw conflict("待办或所属 Agent 的状态已变化，请刷新后重试");
-  return taskDto(row);
+  return taskDto(row, (await tagsForTasks(ctx.env.DB, [row.id])).get(row.id));
 }
 
 export async function deleteTask(ctx: ServiceContext, id: string): Promise<void> {
@@ -208,9 +219,17 @@ export async function deleteTask(ctx: ServiceContext, id: string): Promise<void>
 export async function clearCompletedTasks(ctx: ServiceContext, input: CompletedTasksScope): Promise<{ cleared: number }> {
   const ownerId = effectiveOwnerForRead(ctx, input.agent_id);
   try {
-    return { cleared: await clearCompletedTaskRecords(ctx.env.DB, ownerId, isManagementActor(ctx.actor) ? "not_deleting" : "active") };
+    return { cleared: await clearCompletedTaskRecords(ctx.env.DB, ownerId, isManagementActor(ctx.actor) ? "not_deleting" : "active", { tagId: input.tag_id, untagged: input.untagged === "yes" }) };
   } catch {
     // Translate database/quota failures into a handled response without leaking SQL.
     throw serviceUnavailable("暂时无法清除已完成待办，请稍后再试");
+  }
+}
+
+async function withTagConflict<T>(write: () => Promise<T>): Promise<T> {
+  try { return await write(); }
+  catch (error) {
+    if (String(error).includes("FOREIGN KEY constraint")) throw conflict("标签或待办已变化，请刷新后重试");
+    throw error;
   }
 }

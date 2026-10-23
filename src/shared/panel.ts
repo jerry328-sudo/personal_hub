@@ -5,6 +5,7 @@ export interface PanelIdentity {
   agent_id: string | null;
   can_write: boolean;
   can_manage_entries: boolean;
+  can_manage_task_tags: boolean;
   can_manage_sources: boolean;
 }
 

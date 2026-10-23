@@ -9,6 +9,7 @@ import type { ServiceContext } from "../env";
 import * as entries from "../modules/entries/service";
 import { entryCounts } from "../modules/entries/repository";
 import * as tasks from "../modules/tasks/service";
+import * as taskTags from "../modules/task-tags/service";
 import * as agents from "../modules/agents/service";
 import * as keys from "../modules/auth/service";
 import { listPasskeys, revokePasskey } from "../modules/auth/passkey-management";
@@ -140,6 +141,7 @@ export function createMcpServer(ctx: ServiceContext, scopes: readonly string[], 
         identity: { role, agent_id: ctx.actor.type === "agent" ? ctx.actor.agentId : null,
           can_write: writers.includes(role) && scopeAllows(scopes, "hub:write"),
           can_manage_entries: managers.includes(role) && scopeAllows(scopes, "hub:write"),
+          can_manage_task_tags: managers.includes(role) && scopeAllows(scopes, "hub:write"),
           can_manage_sources: managers.includes(role) && scopeAllows(scopes, "hub:admin") },
         app_origin: ctx.env.APP_ORIGIN, sources, entries: inbox,
         entry: first ? await entries.getEntry(ctx, first.id) : null,
@@ -173,10 +175,14 @@ export function createMcpServer(ctx: ServiceContext, scopes: readonly string[], 
   add("mark_entries_read", "将全部匹配条目标记为已读，覆盖分页范围。", validation.markReadQuerySchema, managers, "hub:write", async (input) => entries.markEntriesRead(ctx, input));
   add("update_entry_state", "修改已读、归档、条目完成状态；待办完成状态独立。", updateEntryStateInput, managers, "hub:write", async ({ id, state }) => entries.updateEntryState(ctx, id, state));
   add("delete_entry", "永久删除条目及全部版本，关联待办保留。", byId, managers, "hub:write", async ({ id }) => entries.deleteEntry(ctx, id), true);
-  add("list_tasks", "分页读取授权范围内的待办。", validation.taskQuerySchema, all, "hub:read", async (input) => tasks.listTasks(ctx, input));
-  add("clear_completed_tasks", "清除当前来源范围内全部已完成待办，包括归档关联项；保留未完成待办及原始条目。调用前应确认清除范围。", validation.completedTasksScopeSchema, writers, "hub:write", async (input) => tasks.clearCompletedTasks(ctx, input), true);
-  add("create_task", "创建待办；归属和关联条目按现有权限校验。", validation.createTaskSchema, writers, "hub:write", async (input) => tasks.createTask(ctx, input));
-  add("update_task", "更新待办标题、截止时间或完成状态。", updateTaskInput, writers, "hub:write", async ({ id, task }) => tasks.updateTask(ctx, id, task));
+  add("list_task_tags", "分页列出已有待办标签；只读身份仅可见授权待办涉及的标签。", validation.taskTagQuerySchema, all, "hub:read", async (input) => taskTags.listTaskTags(ctx, input));
+  add("create_task_tag", "新增全局待办标签；仅管理员和总管可管理标签目录。", validation.taskTagSchema, managers, "hub:write", async (input) => taskTags.createTaskTag(ctx, input));
+  add("update_task_tag", "重命名待办标签，已有待办关联保持不变。", z.object({ id, name: validation.taskTagSchema.shape.name }).strict(), managers, "hub:write", async ({ id, name }) => taskTags.updateTaskTag(ctx, id, { name }));
+  add("delete_task_tag", "删除标签并解除全部关联；保留待办及其他标签。", byId, managers, "hub:write", async ({ id }) => taskTags.deleteTaskTag(ctx, id), true);
+  add("list_tasks", "分页读取授权范围内的待办及标签；支持 tag_id 或 untagged=yes，二者互斥。", validation.taskQuerySchema, all, "hub:read", async (input) => tasks.listTasks(ctx, input));
+  add("clear_completed_tasks", "清除来源及标签筛选范围内所有分页的已完成待办；保留未完成待办及原始条目。调用前应确认范围。", validation.completedTasksScopeSchema, writers, "hub:write", async (input) => tasks.clearCompletedTasks(ctx, input), true);
+  add("create_task", "创建待办，可用 tag_ids 添加已有标签；普通 Agent 仅可创建自身待办。", validation.createTaskSchema, writers, "hub:write", async (input) => tasks.createTask(ctx, input));
+  add("update_task", "更新标题、截止时间、完成状态，或通过 add_tag_ids/remove_tag_ids 增删已有标签；普通 Agent 仅限自身待办。", updateTaskInput, writers, "hub:write", async ({ id, task }) => tasks.updateTask(ctx, id, task));
   add("delete_task", "删除待办。普通 Agent 仅可删除自身待办；总管和管理员可跨来源删除。", byId, writers, "hub:write", async ({ id }) => tasks.deleteTask(ctx, id), true);
   add("report_run", "上报 Agent 本次运行结果。", validation.reportSchema, ["agent", "manager"], "hub:write", async (input) => agents.reportRun(ctx, input));
   add("create_agent", "创建普通、总管或只读 Agent，首把密钥仅在本次响应展示。", validation.createAgentSchema, managers, "hub:admin", async (input) => agents.createAgent(ctx, input));

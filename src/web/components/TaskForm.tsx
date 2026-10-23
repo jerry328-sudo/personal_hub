@@ -3,6 +3,8 @@ import type { AgentDto, EntryBriefDto, TaskDto } from "../../shared/contracts";
 import { dateInputToIso } from "../lib/format";
 import { notifyDataChanged, tasksApi } from "../api";
 import { Dialog, useToast } from "./ui";
+import { TaskTagPicker } from "../../shared/TaskTagControls";
+import { useTaskTags } from "../hooks/useTaskTags";
 
 export function TaskForm({
   open,
@@ -24,12 +26,15 @@ export function TaskForm({
   const [agentId, setAgentId] = useState(defaultAgentId ?? "manual");
   const [due, setDue] = useState("");
   const [busy, setBusy] = useState(false);
+  const [tagIds, setTagIds] = useState<string[]>([]);
+  const tagState = useTaskTags(open);
 
   useEffect(() => {
     if (!open) return;
     setTitle(entry?.title ?? "");
     setAgentId(entry?.agent_id ?? defaultAgentId ?? "manual");
     setDue("");
+    setTagIds([]);
   }, [defaultAgentId, entry, open]);
 
   const submit = async (event: FormEvent) => {
@@ -42,6 +47,7 @@ export function TaskForm({
         agent_id: entry ? undefined : agentId,
         entry_id: entry?.id ?? null,
         due_at: dateInputToIso(due),
+        tag_ids: tagIds,
       });
       notifyDataChanged();
       onCreated?.(task);
@@ -75,6 +81,8 @@ export function TaskForm({
         <label className="field">截止日期（可选）
           <input type="date" value={due} onChange={(event) => setDue(event.target.value)} />
         </label>
+        <TaskTagPicker tags={tagState.tags} selected={tagIds} onChange={setTagIds} disabled={busy || tagState.loading} />
+        {tagState.error ? <p role="alert">{tagState.error}<button type="button" onClick={() => void tagState.refresh()}>重试读取标签</button></p> : null}
         <div className="dialog-actions">
           <button className="btn" type="button" onClick={onClose}>取消</button>
           <button className="btn primary" type="submit" disabled={busy}>{busy ? "创建中…" : "创建待办"}</button>

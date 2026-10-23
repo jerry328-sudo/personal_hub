@@ -1,0 +1,12 @@
+.task-tag-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.task-tag-badge { font-size: 12px; padding: 2px 8px; border-radius: 12px; background: color-mix(in srgb, currentColor 9%, transparent); }
+.task-tag-empty { font-size: 12px; opacity: .65; }
+.task-tag-picker { display: flex; flex-wrap: wrap; gap: 10px 16px; border: 1px solid color-mix(in srgb, currentColor 20%, transparent); border-radius: 8px; padding: 12px; margin: 12px 0; }
+.task-tag-picker label { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+.task-tag-picker input { width: 16px; height: 16px; margin: 0; }
+.task-tag-manager-row { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+.task-tag-manager-row input { min-width: 0; flex: 1; padding: 8px; border-radius: 6px; color: inherit; background: transparent; border: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
+.tag-control-button { color: inherit; background: transparent; border: 1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius: 6px; padding: 8px 10px; white-space: nowrap; cursor: pointer; }
+.tag-control-button:disabled { opacity: .5; cursor: default; }
+.task-tag-delete { border-top: 1px solid color-mix(in srgb, currentColor 20%, transparent); margin-top: 12px; padding-top: 8px; }
+.task-tag-delete button + button { margin-left: 8px; }

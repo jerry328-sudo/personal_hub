@@ -53,6 +53,7 @@ npm run build
 
 ## 文档
 
+- [待办标签](docs/task-tags.md)：多标签分类、权限、网页与面板操作、API / MCP 字段和删除规则。
 - [MCP 接入与部署说明](docs/mcp.md)：密钥/OAuth 两种入口、工具覆盖、权限与撤销、本地开发和生产 KV 配置。
 - [产品与架构设计](docs/design.md)：角色权限、数据模型、接口、状态语义和安全边界。
 - [项目模块与函数设计](docs/module-design.md)：目录结构、模块职责、函数契约、事务边界和测试范围。

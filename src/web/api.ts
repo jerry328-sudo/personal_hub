@@ -20,6 +20,7 @@ import type {
   ReadAccessDto,
   SessionDto,
   TaskDto,
+  TaskTagDto,
   UpdateAgentInput,
   UpdateReadAccessInput,
 } from "../shared/contracts";
@@ -234,6 +235,8 @@ export const entriesApi = {
 };
 
 export interface TaskListQuery {
+  tag_id?: string;
+  untagged?: "yes" | "no";
   agent_id?: string;
   done?: "all" | "yes" | "no";
   cursor?: string;
@@ -241,8 +244,8 @@ export interface TaskListQuery {
 }
 
 export const tasksApi = {
-  clearCompleted: (agent_id?: string) => requestJson<{ cleared: number }>("/api/v1/admin/tasks/completed/clear", {
-    method: "POST", body: jsonBody({ agent_id }),
+  clearCompleted: (agent_id?: string, tags: { tag_id?: string; untagged?: "yes" | "no" } = {}) => requestJson<{ cleared: number }>("/api/v1/admin/tasks/completed/clear", {
+    method: "POST", body: jsonBody({ agent_id, ...tags }),
   }),
   list: (query: TaskListQuery = {}, signal?: AbortSignal) =>
     requestJson<Page<TaskDto>>(withQuery("/api/v1/admin/tasks", query), { signal }),
@@ -256,6 +259,24 @@ export const tasksApi = {
       body: jsonBody(input),
     }),
   delete: (id: string) => requestJson<void>(`/api/v1/admin/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
+};
+
+export const taskTagsApi = {
+  listAll: async (): Promise<TaskTagDto[]> => {
+    const items: TaskTagDto[] = [];
+    const seen = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const page = await requestJson<Page<TaskTagDto>>(withQuery("/api/v1/admin/task-tags", { cursor, limit: 100 }));
+      items.push(...page.items); cursor = page.next_cursor ?? undefined;
+      if (cursor && seen.has(cursor)) throw new Error("标签分页游标重复");
+      if (cursor) seen.add(cursor);
+    } while (cursor);
+    return items;
+  },
+  create: (name: string) => requestJson<TaskTagDto>("/api/v1/admin/task-tags", { method: "POST", body: jsonBody({ name }) }),
+  rename: (id: string, name: string) => requestJson<TaskTagDto>(`/api/v1/admin/task-tags/${encodeURIComponent(id)}`, { method: "PATCH", body: jsonBody({ name }) }),
+  delete: (id: string) => requestJson<void>(`/api/v1/admin/task-tags/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };
 
 export const attachmentsApi = {

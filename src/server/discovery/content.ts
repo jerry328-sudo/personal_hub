@@ -25,6 +25,7 @@ export type QuickStartDocument = {
 };
 
 const READER_ROUTES: RouteSummary[] = [
+  { method: "GET", path: "/api/v1/reader/task-tags", purpose: "分页读取待办标签目录；只读身份仅看授权待办涉及的标签" },
   { method: "GET", path: "/api/v1/reader", purpose: "读取自身配置、读取模式与权限版本" },
   { method: "GET", path: "/api/v1/reader/agents", purpose: "分页列出可访问的内容来源" },
   { method: "GET", path: "/api/v1/reader/entries", purpose: "读取授权范围内的条目" },
@@ -36,6 +37,7 @@ const READER_ROUTES: RouteSummary[] = [
 ];
 
 const AGENT_ROUTES: RouteSummary[] = [
+  { method: "GET", path: "/api/v1/agent/task-tags", purpose: "分页读取待办标签目录；只读身份仅看授权待办涉及的标签" },
   { method: "GET", path: "/api/v1/agent", purpose: "读取自身配置和最近上报状态" },
   { method: "GET", path: "/api/v1/agent/entries", purpose: "分页读取自身当前条目" },
   { method: "POST", path: "/api/v1/agent/entries", purpose: "创建自身条目和版本 1" },
@@ -51,6 +53,9 @@ const AGENT_ROUTES: RouteSummary[] = [
 ];
 
 const MANAGER_ROUTES: RouteSummary[] = [
+  { method: "GET", path: "/api/v1/manager/task-tags", purpose: "分页读取待办标签目录；只读身份仅看授权待办涉及的标签" },
+  { method: "POST", path: "/api/v1/manager/task-tags", purpose: "新增全局待办标签" },
+  { method: "PATCH, DELETE", path: "/api/v1/manager/task-tags/{id}", purpose: "重命名或删除标签；待办及其他标签保留" },
   { method: "GET", path: "/api/v1/manager/agents", purpose: "读取可管理 Agent 的基本状态" },
   { method: "GET", path: "/api/v1/manager/entries", purpose: "跨 Agent 分页查询当前条目" },
   { method: "POST", path: "/api/v1/manager/agents/{agent_id}/entries", purpose: "为目标 Agent 创建条目" },
@@ -66,6 +71,9 @@ const MANAGER_ROUTES: RouteSummary[] = [
 ];
 
 const ADMIN_ROUTES: RouteSummary[] = [
+  { method: "GET", path: "/api/v1/admin/task-tags", purpose: "分页读取待办标签目录；只读身份仅看授权待办涉及的标签" },
+  { method: "POST", path: "/api/v1/admin/task-tags", purpose: "新增全局待办标签" },
+  { method: "PATCH, DELETE", path: "/api/v1/admin/task-tags/{id}", purpose: "重命名或删除标签；待办及其他标签保留" },
   { method: "GET, POST", path: "/api/v1/admin/agents", purpose: "列出或创建 Agent" },
   { method: "PATCH", path: "/api/v1/admin/agents/{id}", purpose: "修改 Agent 配置" },
   { method: "POST", path: "/api/v1/admin/agents/{id}/enable", purpose: "启用 Agent" },
@@ -153,6 +161,17 @@ export function getQuickStart(actor: Actor): QuickStartDocument {
 }
 
 const COMMON_DOCS = `# Personal Hub API v1
+
+## 待办标签
+
+- 每条待办可关联多个全局标签，响应的 \`tags\` 为 \`[{id,name,created_at}]\`，无标签为 \`[]\`。
+- \`GET /api/v1/{角色}/task-tags\` 使用 limit/cursor 分页；普通 Agent 可查看已有目录，只读身份仅看授权待办涉及的标签，不泄露其他待办或全局数量。
+- 仅管理员和启用的总管可 POST 新增、PATCH 重命名、DELETE 删除标签。新增/重命名正文为 \`{name}\`，名称规范化后为 1–40 字符，重名返回 409。
+- 创建待办可传 \`tag_ids\`；修改可传 \`add_tag_ids\` 和 \`remove_tag_ids\`，每组最多 100 个不同 ID，同一 ID 不可同时增删。省略标签字段保持原关联；普通 Agent 只能修改自己的待办。
+- 待办列表和清除已完成支持 \`tag_id\` 或 \`untagged=yes\`，不能同时使用；可与来源和完成状态组合。筛选下推到数据库，变更筛选后丢弃旧游标。
+- 删除标签只解除关联，不删除待办；其他标签保留，最后一个标签移除后成为无标签。删除待办只清理它的关联，不删除标签目录。
+- MCP 对应 list_task_tags/create_task_tag/update_task_tag/delete_task_tag；管理工具仅管理员/总管且具备 hub:write 授权可用。create_task/update_task/list_tasks/clear_completed_tasks 使用同一套字段和规则。
+
 
 所有私有数据接口都要求认证。机器身份使用 \`Authorization: Bearer <独立密钥>\`；管理员使用 HttpOnly Session Cookie，且管理员写操作必须通过同源检查。不要把密钥放进 URL、正文或日志。
 

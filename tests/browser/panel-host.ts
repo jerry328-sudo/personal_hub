@@ -1,10 +1,11 @@
 import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { AgentDto, EntryFullDto, EntryVersionDto, TaskDto } from "../../src/shared/contracts";
+import type { AgentDto, EntryFullDto, EntryVersionDto, TaskDto, TaskTagDto } from "../../src/shared/contracts";
 import type { PanelSnapshot } from "../../src/shared/panel";
 import { HUB_ICONS } from "../../src/shared/hub-icon";
 
 // A local test host, never included in the plugin or Worker build. No production connection.
+const ordinary = new URLSearchParams(location.search).get("role") === "agent";
 const readonly = new URLSearchParams(location.search).get("role") === "reader";
 const source: AgentDto = { id: "paper", name: "论文进展", description: "论文修改与研究记录", role: "agent", status: "active", deleting_at: null,
   display_mode: "report", main_entry_id: "e2", created_at: "2026-10-05T01:40:00Z", last_report_at: null, last_result: null, last_note: null, read_mode: null, read_source_count: null };
@@ -14,14 +15,15 @@ const entries: EntryFullDto[] = Array.from({ length: 57 }, (_, index) => ({ id: 
   content: index === 0 ? "## 本轮更新\n\n整理讨论部分的论证顺序，明确已完成的修改与仍待确认的问题。\n\n## 已完成\n\n- 调整退化路径的论证顺序\n- 统一正文与图注中的术语\n\n## 下一步\n\n1. 核对实验数据与结论是否对应\n2. 补充局限性与适用范围\n3. 整理下一轮讨论的问题" : `这是一条研究记录，用于检查分页、搜索和来源展示。编号 ${index + 1}。`,
   url: null, important: index === 0, updated_at: "2026-10-05T01:40:00Z", created_by_agent_id: "paper", archived: false, read_version: 0, completed: false, completed_at: null }));
 entries.push({ ...entries[0]!, id: "archived-source", title: "已归档记录", archived: true });
-const baseTask: TaskDto = { id: "t1", agent_id: "paper", entry_id: "e1", title: "核对讨论部分的实验依据", due_at: null, done: false, created_at: "2026-10-05T01:00:00Z" };
+const taskTags: TaskTagDto[] = [{ id: "tag-work", name: "工作", created_at: "2026-10-23T00:00:00Z" }, { id: "tag-life", name: "生活", created_at: "2026-10-23T00:00:00Z" }];
+const baseTask: TaskDto = { tags: [], id: "t1", agent_id: "paper", entry_id: "e1", title: "核对讨论部分的实验依据", due_at: null, done: false, created_at: "2026-10-05T01:00:00Z" };
 let tasks: TaskDto[] = [baseTask, { ...baseTask, id: "t2", entry_id: "e2", title: "整理下一轮讨论的问题" },
   { ...baseTask, id: "t3", agent_id: "manual", entry_id: null, title: "整理参考文献" },
   ...Array.from({ length: 13 }, (_, i) => ({ ...baseTask, id: `done-${i}`, title: `已完成事项 ${i + 1}`, done: true })),
   ...Array.from({ length: 21 }, (_, i) => ({ ...baseTask, id: `archived-${i}`, entry_id: "archived-source", title: `归档关联事项 ${i + 1}` }))];
 // Simulate the one-time database migration before the new UI is served.
 tasks = tasks.filter((task) => !entries.some((entry) => entry.id === task.entry_id && entry.archived));
-const identity: PanelSnapshot["identity"] = { role: readonly ? "reader" : "manager", agent_id: "hubadmin", can_write: !readonly, can_manage_entries: !readonly, can_manage_sources: !readonly };
+const identity: PanelSnapshot["identity"] = { role: readonly ? "reader" : ordinary ? "agent" : "manager", agent_id: ordinary ? "paper" : "hubadmin", can_write: !readonly, can_manage_entries: !readonly && !ordinary, can_manage_task_tags: !readonly && !ordinary, can_manage_sources: !readonly && !ordinary };
 const frame = document.querySelector<HTMLIFrameElement>("#panel")!;
 const sidebarIcon = document.querySelector<HTMLImageElement>("#sidebar-icon");
 if (sidebarIcon) sidebarIcon.src = HUB_ICONS.find((icon) => icon.theme === (new URLSearchParams(location.search).get("theme") === "dark" ? "dark" : "light"))!.src;
@@ -49,6 +51,12 @@ document.querySelector("#safe-area")?.addEventListener("click", () => { bridge.s
 bridge.oncalltool = async ({ name, arguments: args = {} }) => {
   calls.push(name); status.textContent = `测试宿主 · 已调用 ${calls.length} 次 · ${name}`;
   if (readonly && ["update_entry_state", "create_task", "update_task", "delete_task", "clear_completed_tasks", "update_agent", "set_agent_status"].includes(name)) return fail("当前身份只读");
+  if (["create_task_tag", "update_task_tag", "delete_task_tag"].includes(name) && (readonly || ordinary)) return fail("无标签管理权限");
+  if (name === "list_task_tags") return ok({ items: readonly ? taskTags.filter(tag => tasks.some(task => task.tags.some(t => t.id === tag.id))) : taskTags, next_cursor: null });
+  if (name === "create_task_tag") { const tag = { id: `tag-${crypto.randomUUID()}`, name: String(args.name), created_at: new Date().toISOString() }; taskTags.push(tag); return ok(tag); }
+  if (name === "update_task_tag") { const tag = taskTags.find(t => t.id === args.id); if (!tag) return fail("标签不存在"); tag.name = String(args.name); return ok(tag); }
+  if (name === "delete_task_tag") { const index = taskTags.findIndex(t => t.id === args.id); if (index >= 0) taskTags.splice(index, 1); tasks.forEach(task => { task.tags = task.tags.filter(t => t.id !== args.id); }); return ok({ success: true }); }
+  const tagMatches = (task: TaskDto) => (!args.tag_id || task.tags.some(t => t.id === args.tag_id)) && (args.untagged !== "yes" || task.tags.length === 0);
   const entry = entries.find((item) => item.id === args.id);
   if (name === "open_hub_panel") return { content: [], _meta: { personalHub: snapshot() } };
   if (name === "list_agents") return ok({ items: sources, next_cursor: null });
@@ -67,13 +75,13 @@ bridge.oncalltool = async ({ name, arguments: args = {} }) => {
     return ok(entry);
   }
   if (name === "list_tasks") {
-    const filtered = tasks.filter((task) => (args.done === "yes" ? task.done : args.done === "no" ? !task.done : true)
+    const filtered = tasks.filter((task) => tagMatches(task) && (!ordinary || task.agent_id === "paper") && (args.done === "yes" ? task.done : args.done === "no" ? !task.done : true)
       && (!args.agent_id || task.agent_id === args.agent_id));
     const offset = Number(args.cursor ?? 0); const limit = Number(args.limit ?? 100);
     return ok({ items: filtered.slice(offset, offset + limit), next_cursor: offset + limit < filtered.length ? String(offset + limit) : null });
   }
   if (name === "clear_completed_tasks") {
-    const matches = (task: TaskDto) => task.done && (!args.agent_id || task.agent_id === args.agent_id);
+    const matches = (task: TaskDto) => tagMatches(task) && task.done && (!args.agent_id || task.agent_id === args.agent_id);
     const count = tasks.filter(matches).length;
     if (new URLSearchParams(location.search).has("fail_clear")) return fail("D1 quota failure fixture");
     tasks = tasks.filter((task) => !matches(task)); return ok({ cleared: count });
@@ -81,11 +89,11 @@ bridge.oncalltool = async ({ name, arguments: args = {} }) => {
   if (name === "create_task") {
     if (entries.some((item) => item.id === args.entry_id && item.archived)) return fail("已归档记录不能创建关联待办");
     if (!sources.some((item) => item.id === args.agent_id && item.status === "active")) return fail("待办来源不存在或不可写");
-    const task: TaskDto = { id: `t${tasks.length + 1}`, title: String(args.title), agent_id: String(args.agent_id), entry_id: args.entry_id ? String(args.entry_id) : null,
+    const task: TaskDto = { tags: taskTags.filter(tag => (args.tag_ids as string[] | undefined)?.includes(tag.id)), id: `t${tasks.length + 1}`, title: String(args.title), agent_id: String(args.agent_id), entry_id: args.entry_id ? String(args.entry_id) : null,
       due_at: args.due_at ? String(args.due_at) : null, done: false, created_at: new Date().toISOString() };
     tasks.push(task); return ok(task);
   }
-  if (name === "update_task") { const task = tasks.find((item) => item.id === args.id); if (!task) return fail("待办不存在"); Object.assign(task, args.task); return ok(task); }
+  if (name === "update_task") { const task = tasks.find((item) => item.id === args.id); if (!task) return fail("待办不存在"); const patch = args.task as { add_tag_ids?: string[]; remove_tag_ids?: string[] }; Object.assign(task, args.task); task.tags = taskTags.filter(tag => (task.tags.some(t => t.id === tag.id) || patch.add_tag_ids?.includes(tag.id)) && !patch.remove_tag_ids?.includes(tag.id)); return ok(task); }
   if (name === "delete_task") { tasks = tasks.filter((task) => task.id !== args.id); return ok({ success: true }); }
   if (name === "update_agent") { const target = sources.find((item) => item.id === args.id); if (target) Object.assign(target, args.agent); return ok(target); }
   if (name === "set_agent_status") { const target = sources.find((item) => item.id === args.id); if (target) target.status = args.action === "disable" ? "disabled" : "active"; return ok(target); }

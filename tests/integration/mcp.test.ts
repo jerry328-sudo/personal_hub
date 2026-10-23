@@ -224,26 +224,27 @@ describe("Codex Hub MCP App", () => {
     expect(response.status).toBe(401);
   });
 });
-async function registration(name = "MCP integration"): Promise<string> {
+async function registration(name = "MCP integration", redirectUri = "https://client.example/callback"): Promise<string> {
   const response = await request("/oauth/register", json("POST", {
-    client_name: name, redirect_uris: ["https://client.example/callback"],
+    client_name: name, redirect_uris: [redirectUri],
     token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"],
   }));
   expect(response.status).toBe(201);
   return (await response.json() as { client_id: string }).client_id;
 }
 const verifier = "test-verifier-abcdefghijklmnopqrstuvwxyz-1234567890";
-async function authPage(cookie: string, scope = "hub:read hub:write offline_access", name?: string) {
-  const clientId = await registration(name);
+async function authPage(cookie: string, scope = "hub:read hub:write offline_access", name?: string, redirectUri = "https://client.example/callback") {
+  const clientId = await registration(name, redirectUri);
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
   const challenge = btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  const query = new URLSearchParams({ client_id: clientId, redirect_uri: "https://client.example/callback", response_type: "code",
+  const query = new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri, response_type: "code",
     scope, state: "test-state", code_challenge: challenge, code_challenge_method: "S256", resource: `${origin}/mcp` });
   const response = await request(`/oauth/authorize?${query}`, { headers: { Cookie: cookie } });
   expect(response.status).toBe(200);
   const content = await response.text();
   const handle = /name="handle" value="([^"]+)"/.exec(content)?.[1]; expect(handle).toBeTruthy();
-  return { clientId, handle: handle!, cookie: `${cookie}; ${cookies(response)}`, content };
+  return { clientId, handle: handle!, cookie: `${cookie}; ${cookies(response)}`, content,
+    csp: response.headers.get("Content-Security-Policy"), query };
 }
 async function approve(page: Awaited<ReturnType<typeof authPage>>, identity: string, scope: string[], key?: string) {
   const form = new URLSearchParams({ handle: page.handle, identity, decision: "approve" });
@@ -339,6 +340,32 @@ describe("additive MCP transport and existing API compatibility", () => {
 });
 
 describe("OAuth authorization and live permission checks", () => {
+  it("allows only the validated callback origin in consent CSP for approval and denial", async () => {
+    const cookie = await login();
+    for (const redirectUri of ["https://client.example/callback?flow=hub", "http://127.0.0.1:61214/callback", "http://localhost:61215/callback"]) {
+      const page = await authPage(cookie, "hub:read", undefined, redirectUri);
+      expect(page.csp).toBe(`default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${new URL(redirectUri).origin}; frame-ancestors 'none'; base-uri 'none'`);
+      const approved = await approve(page, "__admin", ["hub:read"]);
+      expect(approved.status).toBe(302);
+      expect(new URL(approved.headers.get("Location")!).origin).toBe(new URL(redirectUri).origin);
+      const declinedPage = await authPage(cookie, "hub:read", undefined, redirectUri);
+      const denied = await request("/oauth/authorize", { method: "POST",
+        headers: { Cookie: declinedPage.cookie, Origin: origin, "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ handle: declinedPage.handle, decision: "deny" }) });
+      expect(denied.status).toBe(302);
+      const destination = new URL(denied.headers.get("Location")!);
+      expect(destination.origin).toBe(new URL(redirectUri).origin);
+      expect(destination.searchParams.get("error")).toBe("access_denied");
+      const forged = new URLSearchParams(page.query);
+      forged.set("redirect_uri", "https://unregistered.example/callback");
+      const rejected = await request(`/oauth/authorize?${forged}`, { headers: { Cookie: cookie } });
+      expect(rejected.status).toBe(400);
+      expect(rejected.headers.get("Content-Security-Policy")).toBeNull();
+    }
+    const connections = await request("/oauth/connections", { headers: { Cookie: cookie } });
+    expect(connections.headers.get("Content-Security-Policy")).toContain("form-action 'self';");
+    expect(connections.headers.get("Content-Security-Policy")).not.toContain("client.example");
+  });
   it("discovers endpoints, enforces PKCE, one-use consent and codes, and scopes tools", async () => {
     const metadata = await request("/.well-known/oauth-protected-resource/mcp"); expect(metadata.status).toBe(200);
     expect((await metadata.json() as { resource: string }).resource).toBe(`${origin}/mcp`);

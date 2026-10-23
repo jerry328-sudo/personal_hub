@@ -16,9 +16,12 @@ const scopeLabels: Record<string, string> = {
   offline_access: "允许客户端刷新令牌，最长 30 天",
 };
 export const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-function html(body: string, headers = new Headers()): Response {
+function html(body: string, headers = new Headers(), validatedRedirectUri?: string): Response {
   headers.set("Content-Type", "text/html; charset=utf-8");
-  headers.set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+  // Chrome applies form-action to the redirect after POST as well as its target.
+  // Only the authorization page receives the callback already validated by OAuth.
+  const formAction = validatedRedirectUri ? `'self' ${new URL(validatedRedirectUri).origin}` : "'self'";
+  headers.set("Content-Security-Policy", `default-src 'none'; style-src 'unsafe-inline'; form-action ${formAction}; frame-ancestors 'none'; base-uri 'none'`);
   applyPrivateHeaders(headers);
   return new Response(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Personal Hub · MCP 授权</title><style>body{font:16px/1.6 system-ui;background:#f3f5f8;color:#172033;margin:0;padding:24px}main{max-width:650px;margin:32px auto;background:white;border:1px solid #dce2eb;border-radius:16px;padding:28px}h1{font-size:26px}label{display:block;margin:16px 0}select,input[type=password]{box-sizing:border-box;width:100%;padding:12px;border:1px solid #bbc6d7;border-radius:8px}button{padding:10px 20px;margin:8px 8px 8px 0;border:1px solid #bbc6d7;border-radius:8px;background:#edf3ff;cursor:pointer}a{color:#245cca}small{color:#526178}code{overflow-wrap:anywhere}</style><main><a href="/">Personal Hub</a>${body}</main></html>`, { headers });
 }
@@ -71,7 +74,7 @@ async function authorize(request: Request, env: OAuthEnv): Promise<Response> {
         : `<p><a href="/login?return_to=${encodeURIComponent(returnTo)}">使用现有管理员密钥或通行密钥登录</a>，然后选择授权身份。</p>`}
       <details><summary>使用已有 Agent 密钥授权</summary><label>Agent Key<input type="password" name="agent_key" maxlength="300" autocomplete="off"></label><small>只提交给 Personal Hub，权限不会超出此密钥所属身份。</small></details>
       <h2>允许访问的范围</h2><small>只读身份只能选择读取；管理员和总管身份可授予全部管理权限。</small>${offered.map((scope) => `<label><input type="checkbox" name="scope" value="${escapeHtml(scope)}" ${scope !== "hub:admin" && requested.includes(scope) ? "checked" : ""}> ${escapeHtml(scopeLabels[scope] ?? scope)}</label>`).join("")}
-      <button name="decision" value="approve">允许连接</button><button name="decision" value="deny">拒绝</button></form>`, consent.headers);
+      <button name="decision" value="approve">允许连接</button><button name="decision" value="deny">拒绝</button></form>`, consent.headers, auth.redirectUri);
   }
   if (request.method !== "POST") return new Response(null, { status: 405, headers: { Allow: "GET, POST" } });
   requireSameOrigin(request, env.APP_ORIGIN);

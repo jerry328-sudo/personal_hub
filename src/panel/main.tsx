@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Archive, ArrowLeft, Check, CircleCheck, Copy, FilePlus, Mail, Paperclip, RefreshCw, Search, X } from "lucide-react";
-import type { EntryBriefDto, EntryFullDto, EntryVersionBriefDto, EntryVersionDto, Page, TaskDto } from "../shared/contracts";
+import type { EntryBriefDto, EntryFullDto, EntryVersionBriefDto, EntryVersionDto, Page, TaskDto, TaskTagDto } from "../shared/contracts";
+import { TaskTagBadges, TaskTagEditor, TaskTagManager, TaskTagPicker } from "../shared/TaskTagControls";
 import type { PanelSnapshot, PanelSource } from "../shared/panel";
 import { app, attachContext, call, clearContext, connect, extensions } from "./client";
 import "./style.css";
@@ -88,16 +89,18 @@ function SourceCard({ record, mode, origin, source, selected, busy, revision, on
   </div>;
 }
 
-function TaskForm({ sources, entry, onSubmit, busy }: { sources: PanelSource[]; entry: EntryFullDto | null; onSubmit: (args: Record<string, unknown>) => void; busy: boolean }) {
+function TaskForm({ sources, entry, onSubmit, busy, tags }: { sources: PanelSource[]; entry: EntryFullDto | null; onSubmit: (args: Record<string, unknown>) => void; busy: boolean; tags: TaskTagDto[] }) {
+  const [tagIds, setTagIds] = useState<string[]>([]);
   const writable = sources.filter((source) => (!source.role || source.role === "agent") && source.status === "active");
   return <form id="task-form" onSubmit={(event) => {
     event.preventDefault(); const values = new FormData(event.currentTarget);
     const due = String(values.get("due"));
     onSubmit({ title: String(values.get("title")).trim(), agent_id: entry?.agent_id ?? String(values.get("source")),
-      ...(entry ? { entry_id: entry.id } : {}), due_at: due ? new Date(`${due}T23:59:59`).toISOString() : null });
+      ...(entry ? { entry_id: entry.id } : {}), tag_ids: tagIds, due_at: due ? new Date(`${due}T23:59:59`).toISOString() : null });
   }}><label className="form-field">待办标题<input name="title" aria-label="待办标题" required maxLength={180} autoFocus disabled={busy} /></label>
     <label className="form-field">来源<select name="source" aria-label="待办来源" defaultValue={entry?.agent_id ?? writable[0]?.id} disabled={busy || Boolean(entry)} required>{writable.filter((source) => !entry || source.id === entry.agent_id).map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>
     <label className="form-field">截止日期（可选）<input name="due" type="date" aria-label="截止日期" disabled={busy} /></label>
+    <TaskTagPicker tags={tags} selected={tagIds} onChange={setTagIds} disabled={busy} />
   </form>;
 }
 
@@ -120,14 +123,18 @@ function HubPanel({ initial }: { initial: PanelSnapshot }) {
   const [attached, setAttached] = useState(false);
   const [tasks, setTasks] = useState<Page<TaskDto>>({ items: [], next_cursor: null });
   const [taskFilter, setTaskFilter] = useState("open");
+  const [taskTags, setTaskTags] = useState<TaskTagDto[]>([]);
+  const [tagFilter, setTagFilter] = useState("");
+  const [tagTask, setTagTask] = useState<TaskDto | null>(null);
+  const [tagError, setTagError] = useState("");
   const [revision, setRevision] = useState(0);
   const [loading, setLoading] = useState(false);
   const [readerLoading, setReaderLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [modal, setModal] = useState<"context" | "manage" | "task" | "clear" | null>(null);
-  const [clearScope, setClearScope] = useState<{ agent_id?: string; label: string } | null>(null);
+  const [modal, setModal] = useState<"context" | "manage" | "task" | "clear" | "tags" | "tag-edit" | null>(null);
+  const [clearScope, setClearScope] = useState<{ agent_id?: string; tag_id?: string; untagged?: "yes"; label: string } | null>(null);
   const [taskEntry, setTaskEntry] = useState<EntryFullDto | null>(null);
   const boot = useRef(true);
   const readerBoot = useRef(true);
@@ -137,6 +144,25 @@ function HubPanel({ initial }: { initial: PanelSnapshot }) {
   const locking = useRef(false);
   const restoredContext = useRef(false);
   const [identity, setIdentity] = useState(initial.identity);
+  const needsTags = nav === "tasks" || modal === "task" || modal === "tags" || modal === "tag-edit";
+  useEffect(() => {
+    if (!needsTags) return;
+    let cancelled = false; setTagError("");
+    void (async () => {
+      const items: TaskTagDto[] = []; let cursor: string | undefined;
+      const seen = new Set<string>();
+      do {
+        const page = await call<Page<TaskTagDto>>("list_task_tags", { limit: 100, ...(cursor ? { cursor } : {}) });
+        if (cancelled) return;
+        items.push(...page.items); cursor = page.next_cursor ?? undefined;
+        if (cursor && seen.has(cursor)) throw new Error("标签分页游标重复");
+        if (cursor) seen.add(cursor);
+      } while (cursor);
+      setTaskTags(items);
+      setTagFilter((current) => current && current !== "none" && !items.some((tag) => tag.id === current) ? "" : current);
+    })().catch((reason: unknown) => { if (!cancelled) setTagError(messageOf(reason)); });
+    return () => { cancelled = true; };
+  }, [needsTags, revision]);
   const sourceName = (id: string) => sources.items.find((source) => source.id === id)?.name ?? id;
   const board = sources.items.find((source) => source.id === sourceBoard);
   const shownVersion = historical?.version ?? entry?.version;
@@ -146,18 +172,20 @@ function HubPanel({ initial }: { initial: PanelSnapshot }) {
     ...(filter === "unread" ? { read: "unread" } : {}), ...(filter === "important" ? { important: "yes" } : {}) };
   const entryQuery = JSON.stringify(queryArgs);
   const taskQuery = JSON.stringify({ done: taskFilter === "done" ? "yes" : taskFilter === "open" ? "no" : "all",
-    limit: 100, ...(sourceId !== "all" ? { agent_id: sourceId } : {}) });
+    limit: 100, ...taskTagFilter(tagFilter), ...(sourceId !== "all" ? { agent_id: sourceId } : {}) });
   const visibleTasks = tasks.items.filter((task) => task.title.toLowerCase().includes(search.trim().toLowerCase()));
 
   const prepareClear = () => {
-    setClearScope({ ...(sourceId === "all" ? {} : { agent_id: sourceId }), label: sourceId === "all" ? "全部来源" : sourceName(sourceId) });
+    const source = sourceId === "all" ? "全部来源" : sourceName(sourceId);
+    const tag = tagFilter === "none" ? "无标签" : taskTags.find((tag) => tag.id === tagFilter)?.name ?? "全部标签";
+    setClearScope({ ...(sourceId === "all" ? {} : { agent_id: sourceId }), ...taskTagFilter(tagFilter), label: `${source} · ${tag}` });
     setModal("clear");
   };
   const clearCompleted = async () => {
     if (!clearScope || locking.current) return;
     locking.current = true; setBusy(true); setError("");
     try {
-      const { cleared } = await call<{ cleared: number }>("clear_completed_tasks", { agent_id: clearScope.agent_id });
+      const { cleared } = await call<{ cleared: number }>("clear_completed_tasks", { agent_id: clearScope.agent_id, tag_id: clearScope.tag_id, untagged: clearScope.untagged });
       setNotice(`已清除 ${cleared} 项已完成待办`); setRevision((value) => value + 1);
     } catch { setError("暂时无法清除已完成待办，请稍后再试"); }
     finally { setModal(null); setClearScope(null); locking.current = false; setBusy(false); }
@@ -357,18 +385,19 @@ function HubPanel({ initial }: { initial: PanelSnapshot }) {
     {sources.next_cursor ? <button className="button load-more" disabled={busy} onClick={() => { void moreSources(); }}>加载更多来源</button> : null}
   </section>;
 
-  const listControls = <div className="list-controls"><div className="list-title"><h1>{board?.name ?? (nav === "archive" ? "归档" : "收件箱")}</h1><span className="record-count">{entries.items.length}{entries.next_cursor ? "+" : ""} 条记录</span></div>
-    <div className="search-row"><label className="search-field"><Search /><input type="search" placeholder="搜索标题或内容" aria-label="搜索标题或内容" value={search} maxLength={200} onChange={(event) => { setSearch(event.target.value); setReading(false); }} /></label>
+  const listControls = <div className="list-controls"><div className="list-heading"><div className="list-title"><h1>{board?.name ?? (nav === "archive" ? "归档" : "收件箱")}</h1><span className="record-count">{entries.items.length}{entries.next_cursor ? "+" : ""} 条</span></div>
+      <div className="filters">{[["all", "全部"], ["unread", "未读"], ["important", "重要"]].map(([id, label]) => <button key={id} aria-pressed={filter === id} className={filter === id ? "active" : ""} onClick={() => { setFilter(id!); setReading(false); }}>{label}</button>)}</div></div>
+    <div className="search-row"><label className="search-field"><Search /><input type="search" placeholder="搜索记录" aria-label="搜索标题或内容" value={search} maxLength={200} onChange={(event) => { setSearch(event.target.value); setReading(false); }} /></label>
       {!board ? <select aria-label="来源筛选" value={sourceId} onChange={(event) => { setSourceId(event.target.value); setReading(false); setVersion(null); }}><option value="all">全部来源</option>{sources.items.map((source) => <option value={source.id} key={source.id}>{source.name}</option>)}</select> : null}</div>
-    <div className="filters">{[["all", "全部"], ["unread", "未读"], ["important", "重要"]].map(([id, label]) => <button key={id} aria-pressed={filter === id} className={filter === id ? "active" : ""} onClick={() => { setFilter(id!); setReading(false); }}>{label}</button>)}</div>
   </div>;
 
   return <div className="hub-app">
     {modal === "clear" && clearScope ? <Dialog title="清除已完成待办" close={() => { if (!busy) { setModal(null); setClearScope(null); } }} actions={<><button className="button" disabled={busy} onClick={() => { setModal(null); setClearScope(null); }}>取消</button><button className="button primary" disabled={busy} onClick={() => { void clearCompleted(); }}>{busy ? "正在清除…" : "确认清除"}</button></>}>
       <p>将清除「{clearScope.label}」所有分页的已完成待办，包括归档关联项。搜索文字不影响范围。未完成待办和原始记录会保留。</p>
     </Dialog> : null}
-    <header className="app-header"><button className="brand" onClick={() => { navigate("inbox"); }} aria-label="Personal Hub 收件箱"><HubIcon /><span>Personal Hub</span></button><div className="header-actions"><button className="icon-button" aria-label="刷新" disabled={busy} onClick={refresh}><RefreshCw /></button><button className="button" onClick={() => { setModal("manage"); }}>管理</button></div></header>
-    <nav className="main-tabs" aria-label="Hub 导航">{tabs.map(([id, title]) => <button key={id} aria-current={nav === id ? "page" : undefined} onClick={() => { navigate(id); }}>{title}</button>)}</nav>
+    <header className="app-header"><button className="brand" onClick={() => { navigate("inbox"); }} aria-label="Personal Hub 收件箱" title="Personal Hub"><HubIcon /></button>
+      <nav className="main-tabs" aria-label="Hub 导航">{tabs.map(([id, title]) => <button key={id} aria-current={nav === id ? "page" : undefined} onClick={() => { navigate(id); }}>{title}</button>)}</nav>
+      <div className="header-actions"><span className="identity-label">{identity.role === "manager" ? "总管" : identity.role === "admin" ? "管理员" : identity.role === "reader" ? "只读" : "来源身份"}</span><button className="icon-button" aria-label="刷新" disabled={busy} onClick={refresh}><RefreshCw /></button><button className="button small" onClick={() => { setModal("manage"); }}>管理</button></div></header>
     {error ? <div className="error-banner" role="alert">{error}<button onClick={() => { setError(""); }} aria-label="关闭错误"><X /></button></div> : null}
     {nav === "sources" && !board ? <main className="workspace full">{sourcesView}</main> : nav === "tasks" ? <main className="workspace full"><section className="full-view">
       <div className="view-heading"><div><h1>待办</h1><p>从记录中提取下一步，逐项跟进。</p></div>{identity.can_write ? <button className="button green-outline" disabled={busy} onClick={() => { setTaskEntry(null); setModal("task"); }}><FilePlus />新增待办</button> : null}</div>
@@ -376,9 +405,12 @@ function HubPanel({ initial }: { initial: PanelSnapshot }) {
         {identity.can_write ? <button className="button" disabled={busy} onClick={() => { void prepareClear(); }}>清除已完成</button> : null}
         <label className="search-field"><Search /><input type="search" placeholder="搜索待办" aria-label="搜索待办" value={search} onChange={(event) => { setSearch(event.target.value); }} /></label>
         <select aria-label="待办来源筛选" value={sourceId} onChange={(event) => { setSourceId(event.target.value); }}><option value="all">全部来源</option>{sources.items.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}</select>
+        <select aria-label="待办标签筛选" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}><option value="">全部标签</option><option value="none">无标签</option>{taskTags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}</select>
+        {identity.can_manage_task_tags ? <button className="button" onClick={() => setModal("tags")}>管理标签</button> : null}
       </div>
+      {tagError ? <p role="alert">{tagError}<button onClick={() => setRevision((value) => value + 1)}>重试读取标签</button></p> : null}
       {loading && tasks.items.length === 0 ? <div className="empty-state" role="status">正在读取待办…</div> : null}
-      {visibleTasks.map((task) => <div className={`task-row ${task.done ? "done" : ""}`} key={task.id}><input type="checkbox" aria-label={`完成待办：${task.title}`} checked={task.done} disabled={busy || !identity.can_write} onChange={(event) => { void mutate(() => call("update_task", { id: task.id, task: { done: event.target.checked } }), "待办已更新"); }} /><div className="task-copy"><strong>{task.title}</strong><p>{sourceName(task.agent_id)}{task.due_at ? ` · 截止 ${dateText(task.due_at)}` : ""}</p></div>{identity.can_write ? <button className="text-button" disabled={busy} aria-label={`删除待办：${task.title}`} onClick={() => { if (window.confirm(`删除待办“${task.title}”？`)) void mutate(() => call("delete_task", { id: task.id }), "待办已删除"); }}>删除</button> : null}</div>)}
+      {visibleTasks.map((task) => <div className={`task-row ${task.done ? "done" : ""}`} key={task.id}><input type="checkbox" aria-label={`完成待办：${task.title}`} checked={task.done} disabled={busy || !identity.can_write} onChange={(event) => { void mutate(() => call("update_task", { id: task.id, task: { done: event.target.checked } }), "待办已更新"); }} /><div className="task-copy"><strong>{task.title}</strong><p>{sourceName(task.agent_id)}{task.due_at ? ` · 截止 ${dateText(task.due_at)}` : ""}</p><TaskTagBadges tags={task.tags} /></div>{identity.can_write ? <button className="text-button" disabled={busy} aria-label={`编辑标签：${task.title}`} onClick={() => { setTagTask(task); setModal("tag-edit"); }}>标签</button> : null}{identity.can_write ? <button className="text-button" disabled={busy} aria-label={`删除待办：${task.title}`} onClick={() => { if (window.confirm(`删除待办“${task.title}”？`)) void mutate(() => call("delete_task", { id: task.id }), "待办已删除"); }}>删除</button> : null}</div>)}
       {!loading && visibleTasks.length === 0 ? <div className="empty-state">{search ? "已载入的待办中没有匹配项。" : "没有符合条件的待办。"}</div> : null}
       {tasks.next_cursor ? <button className="button load-more" disabled={loading} onClick={() => { void moreTasks(); }}>加载更多待办</button> : null}
     </section></main> : <>
@@ -399,13 +431,17 @@ function HubPanel({ initial }: { initial: PanelSnapshot }) {
         </div></section><section className="reader-pane" aria-label="条目详情"><div className="reader-document">{reader()}</div></section>
       </main>}
     </>}
-    <section className="selection-tray" aria-label="已选引用"><span className="selection-mark"><Check /></span><div className="selection-copy"><strong>已选 {selected.size} 条{attached ? " · 已附到聊天" : ""}</strong><span>{selected.size ? [...selected.values()].map((item) => item.entry.title).join("、") : "选择记录，再带入当前聊天"}</span></div><button className="button primary" disabled={!selected.size || busy} onClick={() => { setModal("context"); }}><Paperclip />带入聊天</button><button className="text-button" disabled={!selected.size || busy} onClick={() => { void mutate(async () => { await clearContext(); setSelected(new Map()); setAttached(false); }, "已清空引用"); }}>清空</button></section>
-    <footer className="app-footer">{identity.role === "manager" ? "总管" : identity.role === "admin" ? "管理员" : identity.role === "reader" ? "只读" : "来源身份"} · Personal Hub</footer>
+    {selected.size > 0 ? <section className="selection-tray" aria-label="已选引用"><span className="selection-mark"><Check /></span><div className="selection-copy"><strong aria-live="polite">已选 {selected.size} 条{attached ? " · 已附到聊天" : ""}</strong><span>{[...selected.values()].map((item) => item.entry.title).join("、")}</span></div><button className="button primary" disabled={busy} onClick={() => { setModal("context"); }}><Paperclip />带入聊天</button><button className="text-button" disabled={busy} onClick={() => { void mutate(async () => { await clearContext(); setSelected(new Map()); setAttached(false); }, "已清空引用"); }}>清空</button></section> : null}
     {notice ? <div className="toast show" role="status">{notice}</div> : null}
+    {modal === "tags" && identity.can_manage_task_tags ? <Dialog title="管理标签" close={() => setModal(null)}><TaskTagManager tags={taskTags}
+      create={async (name) => { await call("create_task_tag", { name }); setRevision((value) => value + 1); }}
+      rename={async (id, name) => { await call("update_task_tag", { id, name }); setRevision((value) => value + 1); }}
+      remove={async (id) => { await call("delete_task_tag", { id }); setRevision((value) => value + 1); }} /></Dialog> : null}
+    {modal === "tag-edit" && tagTask ? <Dialog title="编辑待办标签" close={() => setModal(null)}><TaskTagEditor key={tagTask.id} tags={taskTags} initial={tagTask.tags ?? []} save={async (task) => { await call("update_task", { id: tagTask.id, task }); setModal(null); setRevision((value) => value + 1); }} /></Dialog> : null}
     {modal === "context" ? <Dialog title="带入当前聊天" close={() => { setModal(null); }} actions={<><button className="button" disabled={busy} onClick={() => { void navigator.clipboard.writeText([...selected.values()].map(({ source, entry: item }) => `# ${item.title}\n来源：${source} · 版本 ${item.version}\n\n${item.content}`).join("\n\n---\n\n")).then(() => { setNotice("引用已复制"); }).catch(() => { setError("复制不可用，可以直接选取引用正文。"); }); }}><Copy />复制引用</button><button className="button primary" disabled={busy} onClick={() => { void attachSelected(); }}>附到聊天</button></>}>
       <p>引用包含来源、完整正文和所选版本。附上后，你可以继续在 Codex 输入消息。</p>{[...selected.values()].map(({ source, entry: item }) => <article className="context-item" key={item.entry_id}><h3>{item.title}</h3><div className="row-meta">{source} · 版本 {item.version}</div><div className="context-content">{item.content}</div></article>)}
     </Dialog> : modal === "task" ? <Dialog title="创建待办" close={() => { if (!busy) setModal(null); }} actions={<><button className="button" disabled={busy} onClick={() => { setModal(null); }}>取消</button><button className="button primary" form="task-form" type="submit" disabled={busy}>创建待办</button></>}>
-      <TaskForm sources={sources.items} entry={taskEntry} busy={busy} onSubmit={(args) => { void mutate(async () => { await call("create_task", args); setModal(null); }, "待办已创建"); }} />
+      <TaskForm tags={taskTags} sources={sources.items} entry={taskEntry} busy={busy} onSubmit={(args) => { void mutate(async () => { await call("create_task", args); setModal(null); }, "待办已创建"); }} />
     </Dialog> : modal === "manage" ? <Dialog title="管理" close={() => { setModal(null); }}><div className="management-note">当前身份：{identity.role === "manager" ? "总管" : identity.role}。{identity.can_manage_sources ? "可以管理全部来源和展示方式。" : "当前连接未授权来源管理。"}</div>
       {sources.items.map((source) => <div className="management-row" key={source.id}><div className="source-copy"><strong>{source.name}</strong><p>{layouts[source.display_mode]} · {source.status === "active" ? "已启用" : "已停用"}</p></div>{identity.can_manage_sources && ["active", "disabled"].includes(source.status) ? <button className="button small" disabled={busy || source.id === identity.agent_id} onClick={() => { const action = source.status === "active" ? "disable" : "enable"; void mutate(async () => {
         await call("set_agent_status", { id: source.id, action }); setSources((previous) => ({ ...previous, items: previous.items.map((item) => item.id === source.id ? { ...item, status: action === "disable" ? "disabled" : "active" } : item) }));
@@ -413,6 +449,10 @@ function HubPanel({ initial }: { initial: PanelSnapshot }) {
       {sources.next_cursor ? <button className="button load-more" disabled={busy} onClick={() => { void moreSources(); }}>加载更多来源</button> : null}
     </Dialog> : null}
   </div>;
+}
+
+function taskTagFilter(value: string): { tag_id?: string; untagged?: "yes" } {
+  return value === "none" ? { untagged: "yes" } : value ? { tag_id: value } : {};
 }
 
 function Startup() {

@@ -4,6 +4,7 @@ import { requireApiIdentity, requireReaderPathAccess } from "./modules/auth/midd
 import { registerAuthRoutes } from "./modules/auth/routes";
 import { registerPasskeyRoutes } from "./modules/auth/passkeys";
 import { registerTaskRoutes } from "./modules/tasks/routes";
+import { registerTaskTagRoutes } from "./modules/task-tags/routes";
 import { registerEntryRoutes } from "./modules/entries/routes";
 import { registerAttachmentRoutes } from "./modules/attachments/routes";
 import { purgeAgentAttachmentsStep } from "./modules/attachments/service";
@@ -66,6 +67,7 @@ registerReaderRoutes(app);
 registerEntryRoutes(app);
 registerAttachmentRoutes(app);
 registerTaskRoutes(app);
+registerTaskTagRoutes(app);
 
 app.get("/api/health", (c) => c.json({ status: "ok" }));
 

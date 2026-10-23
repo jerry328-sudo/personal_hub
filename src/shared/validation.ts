@@ -79,18 +79,32 @@ export const patchEntryStateSchema = z.object({
   completed: z.boolean().optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "至少提供一个状态字段");
 
+const tagId = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
+const tagIds = z.array(tagId).max(100).refine((ids) => new Set(ids).size === ids.length, "标签不能重复");
+export const taskTagSchema = z.object({ name: z.string().trim().min(1).max(40) }).strict();
+export const taskTagQuerySchema = z.object({
+  cursor: z.string().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(LIMITS.maxPageSize).optional(),
+}).strict();
+const tagFilter = { tag_id: tagId.optional(), untagged: z.enum(["yes", "no"]).optional() };
+const validTagFilter = (value: { tag_id?: string; untagged?: string }) => !(value.tag_id && value.untagged === "yes");
+
 export const createTaskSchema = z.object({
   title: z.string().trim().min(1).max(LIMITS.taskTitleCharacters),
   entry_id: z.string().min(1).nullable().optional(),
   agent_id: z.string().min(1).optional(),
   due_at: isoDateTime.nullable().optional(),
+  tag_ids: tagIds.optional(),
 }).strict();
 
 export const patchTaskSchema = z.object({
   title: z.string().trim().min(1).max(LIMITS.taskTitleCharacters).optional(),
   due_at: isoDateTime.nullable().optional(),
   done: z.boolean().optional(),
-}).strict().refine((value) => Object.keys(value).length > 0, "至少提供一个字段");
+  add_tag_ids: tagIds.optional(),
+  remove_tag_ids: tagIds.optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, "至少提供一个字段")
+  .refine((value) => !value.add_tag_ids?.some((id) => value.remove_tag_ids?.includes(id)), "不能同时添加和移除同一标签");
 
 export const reportSchema = z.object({
   result: z.enum(["success", "failed"]),
@@ -133,19 +147,21 @@ export const entryQuerySchema = entryQueryObject.refine(validTimeRange, "开始�
 export const markReadQuerySchema = entryQueryObject.omit({ cursor: true, limit: true, view: true, order: true }).refine(validTimeRange, "开始时间必须早于结束时间");
 
 export const taskQuerySchema = z.object({
+  ...tagFilter,
   agent_id: z.string().min(1).optional(),
   done: z.enum(["all", "yes", "no"]).optional(),
   // Legacy clients may send this flag; archive cleanup removes the need to filter.
   include_archived: z.enum(["yes", "no"]).optional(),
   cursor: z.string().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(LIMITS.maxPageSize).optional(),
-}).strict();
+}).strict().refine(validTagFilter, "指定标签与无标签筛选不能同时使用");
 
 export type EntryQuery = z.infer<typeof entryQuerySchema>;
 export type TaskQuery = z.infer<typeof taskQuerySchema>;
 
 // Bulk cleanup targets all completed tasks across all pages.
 export const completedTasksScopeSchema = z.object({
+  ...tagFilter,
   agent_id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(),
-}).strict();
+}).strict().refine(validTagFilter, "指定标签与无标签筛选不能同时使用");
 export type CompletedTasksScope = z.infer<typeof completedTasksScopeSchema>;

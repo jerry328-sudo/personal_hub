@@ -1,11 +1,13 @@
 import { ExternalLink, Menu, Plus, Search, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type { TaskDto } from "../../shared/contracts";
-import { notifyDataChanged, subscribeDataChanged, tasksApi } from "../api";
+import { notifyDataChanged, subscribeDataChanged, tasksApi, taskTagsApi } from "../api";
 import { useAppShell } from "../components/AppShell";
 import { TaskForm } from "../components/TaskForm";
-import { ConfirmDialog, EmptyState, ErrorState, LoadingState, useToast } from "../components/ui";
+import { ConfirmDialog, Dialog, EmptyState, ErrorState, LoadingState, useToast } from "../components/ui";
+import { TaskTagBadges, TaskTagEditor, TaskTagManager } from "../../shared/TaskTagControls";
+import { useTaskTags } from "../hooks/useTaskTags";
 import { formatDateTime } from "../lib/format";
 
 type TaskFilter = "open" | "done" | "all";
@@ -15,6 +17,16 @@ export function TasksPage() {
   const { showToast } = useToast();
   const [params, setParams] = useSearchParams();
   const agentId = params.get("agent") ?? "";
+  const tagFilter = params.get("tag") ?? "";
+  const tagState = useTaskTags();
+  const [manageTags, setManageTags] = useState(false);
+  const [tagTask, setTagTask] = useState<TaskDto | null>(null);
+  const requestVersion = useRef(0);
+  useEffect(() => {
+    if (!tagState.loading && !tagState.error && tagFilter && tagFilter !== "none" && !tagState.tags.some((tag) => tag.id === tagFilter)) {
+      setParams((current) => { const next = new URLSearchParams(current); next.delete("tag"); return next; }, { replace: true });
+    }
+  }, [tagState.tags, tagState.loading, tagState.error, tagFilter, setParams]);
   const [filter, setFilter] = useState<TaskFilter>("open");
   const [query, setQuery] = useState("");
   const [tasks, setTasks] = useState<TaskDto[]>([]);
@@ -24,44 +36,52 @@ export function TasksPage() {
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [deleting, setDeleting] = useState<TaskDto | null>(null);
-  const [clearScope, setClearScope] = useState<{ agentId?: string; label: string } | null>(null);
+  const [clearScope, setClearScope] = useState<{ agentId?: string; tag_id?: string; untagged?: "yes"; label: string } | null>(null);
   const [clearing, setClearing] = useState(false);
 
   const prepareClear = () => {
-    setClearScope({ agentId: agentId || undefined, label: agentId ? agents.find((agent) => agent.id === agentId)?.name ?? agentId : "全部来源" });
+    const source = agentId ? agents.find((agent) => agent.id === agentId)?.name ?? agentId : "全部来源";
+    const tag = tagFilter === "none" ? "无标签" : tagState.tags.find((tag) => tag.id === tagFilter)?.name ?? "全部标签";
+    setClearScope({ agentId: agentId || undefined, ...taskTagFilter(tagFilter), label: `${source} · ${tag}` });
   };
   const clearCompleted = async () => {
     if (!clearScope || clearing) return;
     setClearing(true);
     try {
-      const { cleared } = await tasksApi.clearCompleted(clearScope.agentId);
+      const { cleared } = await tasksApi.clearCompleted(clearScope.agentId, { tag_id: clearScope.tag_id, untagged: clearScope.untagged });
       setClearScope(null); showToast(`已清除 ${cleared} 项已完成待办`); notifyDataChanged();
     } catch { setClearScope(null); showToast("暂时无法清除已完成待办，请稍后再试", "error"); }
     finally { setClearing(false); }
   };
 
   const load = useCallback(() => {
+    const generation = ++requestVersion.current;
     setLoading(true);
     setError(null);
-    tasksApi.list({ agent_id: agentId || undefined, done: filter === "all" ? "all" : filter === "done" ? "yes" : "no", limit: 100 })
-      .then((page) => { setTasks(page.items); setNextCursor(page.next_cursor); })
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "待办读取失败"))
-      .finally(() => setLoading(false));
-  }, [agentId, filter]);
-  useEffect(() => { load(); }, [load]);
+    tasksApi.list({ ...taskTagFilter(tagFilter), agent_id: agentId || undefined, done: filter === "all" ? "all" : filter === "done" ? "yes" : "no", limit: 100 })
+      .then((page) => { if (generation === requestVersion.current) { setTasks(page.items); setNextCursor(page.next_cursor); } })
+      .catch((reason: unknown) => { if (generation === requestVersion.current) setError(reason instanceof Error ? reason.message : "待办读取失败"); })
+      .finally(() => { if (generation === requestVersion.current) setLoading(false); });
+  }, [agentId, filter, tagFilter]);
+  const invalidateLoads = useCallback(() => { requestVersion.current++; }, []);
+  useEffect(() => { load(); return invalidateLoads; }, [load, invalidateLoads]);
   useEffect(() => subscribeDataChanged(load), [load]);
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
+    const generation = requestVersion.current;
     try {
       const page = await tasksApi.list({
+        ...taskTagFilter(tagFilter),
         agent_id: agentId || undefined,
         done: filter === "all" ? "all" : filter === "done" ? "yes" : "no",
         cursor: nextCursor,
         limit: 100,
       });
-      setTasks((current) => [...current, ...page.items]);
-      setNextCursor(page.next_cursor);
+      if (generation === requestVersion.current) {
+        setTasks((current) => [...current, ...page.items]);
+        setNextCursor(page.next_cursor);
+      }
     } catch (reason) {
       showToast(reason instanceof Error ? reason.message : "下一页读取失败", "error");
     } finally {
@@ -112,12 +132,16 @@ export function TasksPage() {
             <option value="">全部</option><option value="manual">手动待办</option>{agents.filter((agent) => agent.id !== "manual" && agent.role === "agent").map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
           </select>
         </label>
+        <label className="agent-filter">标签<select aria-label="待办标签筛选" value={tagFilter} onChange={(event) => { const next = new URLSearchParams(params); if (event.target.value) next.set("tag", event.target.value); else next.delete("tag"); setParams(next); }}><option value="">全部标签</option><option value="none">无标签</option>{tagState.tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}</select></label>
+        <button className="btn" type="button" onClick={() => setManageTags(true)}>管理标签</button>
       </div>
+      {tagState.error ? <ErrorState message={tagState.error} onRetry={() => void tagState.refresh()} /> : null}
       {loading ? <LoadingState /> : error ? <ErrorState message={error} onRetry={load} /> : tasks.length || nextCursor ? (
         <div className="task-list">
           {visible.length ? visible.map((task) => <article className={`task-row ${task.done ? "done" : ""}`} key={task.id}>
             <label className="completion-check"><input type="checkbox" checked={task.done} onChange={() => void toggle(task)} /><span className="sr-only">{task.done ? "恢复" : "完成"}：{task.title}</span></label>
-            <div className="task-main"><h2>{task.title}</h2><p>{agentMap.get(task.agent_id) ?? (task.agent_id === "manual" ? "手动待办" : task.agent_id)}{task.due_at ? ` · 截止 ${formatDateTime(task.due_at)}` : ""}</p></div>
+            <div className="task-main"><h2>{task.title}</h2><p>{agentMap.get(task.agent_id) ?? (task.agent_id === "manual" ? "手动待办" : task.agent_id)}{task.due_at ? ` · 截止 ${formatDateTime(task.due_at)}` : ""}</p><TaskTagBadges tags={task.tags} /></div>
+            <button className="text-action" type="button" aria-label={`编辑标签：${task.title}`} onClick={() => setTagTask(task)}>标签</button>
             {task.entry_id ? <Link className="text-action" to={`/entries/${encodeURIComponent(task.entry_id)}`}>查看来源 <ExternalLink aria-hidden="true" /></Link> : null}
             <button className="icon-btn danger-icon" type="button" onClick={() => setDeleting(task)} aria-label={`删除待办：${task.title}`}><Trash2 aria-hidden="true" /></button>
           </article>) : <EmptyState title="已载入的待办中没有匹配项" detail={nextCursor ? "可以继续加载后续页面。" : "请调整搜索文字。"} />}
@@ -125,8 +149,17 @@ export function TasksPage() {
         </div>
       ) : <EmptyState title={filter === "done" ? "还没有已完成的待办" : "这里暂时没有待办"} detail="可以手动添加，或从信息正文中创建。" />}
       <TaskForm open={formOpen} onClose={() => setFormOpen(false)} agents={agents} defaultAgentId={agentId || undefined} onCreated={() => load()} />
+      <Dialog open={manageTags} title="管理标签" onClose={() => setManageTags(false)}><TaskTagManager tags={tagState.tags}
+        create={async (name) => { await taskTagsApi.create(name); await tagState.refresh(); notifyDataChanged(); }}
+        rename={async (id, name) => { await taskTagsApi.rename(id, name); await tagState.refresh(); notifyDataChanged(); }}
+        remove={async (id) => { await taskTagsApi.delete(id); await tagState.refresh(); notifyDataChanged(); }} /></Dialog>
+      <Dialog open={Boolean(tagTask)} title="编辑待办标签" onClose={() => setTagTask(null)}>{tagTask ? <TaskTagEditor key={tagTask.id} tags={tagState.tags} initial={tagTask.tags ?? []} save={async (patch) => { await tasksApi.update(tagTask.id, patch); setTagTask(null); notifyDataChanged(); }} /> : null}</Dialog>
       <ConfirmDialog open={Boolean(deleting)} title="删除待办" description="删除待办不会影响它所关联的原始信息。" confirmLabel="删除" danger onClose={() => setDeleting(null)} onConfirm={remove} />
       <ConfirmDialog open={Boolean(clearScope)} title="清除已完成待办" description={`将清除「${clearScope?.label ?? ""}」所有分页的已完成待办，包括归档关联项。搜索文字不影响范围。未完成待办和原始记录会保留。`} confirmLabel="确认清除" danger busy={clearing} onClose={() => { if (!clearing) setClearScope(null); }} onConfirm={clearCompleted} />
     </div>
   );
+}
+
+function taskTagFilter(value: string): { tag_id?: string; untagged?: "yes" } {
+  return value === "none" ? { untagged: "yes" } : value ? { tag_id: value } : {};
 }

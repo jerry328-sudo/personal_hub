@@ -119,6 +119,12 @@ export interface EntryVersionBriefDto {
   created_at: string;
 }
 
+export interface TaskTagDto {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
 export interface TaskDto {
   id: string;
   agent_id: string;
@@ -127,6 +133,7 @@ export interface TaskDto {
   done: boolean;
   due_at: string | null;
   created_at: string;
+  tags: TaskTagDto[];
 }
 
 export interface AttachmentDto {
@@ -175,12 +182,15 @@ export interface CreateTaskInput {
   entry_id?: string | null;
   agent_id?: string;
   due_at?: string | null;
+  tag_ids?: string[];
 }
 
 export interface PatchTaskInput {
   title?: string;
   due_at?: string | null;
   done?: boolean;
+  add_tag_ids?: string[];
+  remove_tag_ids?: string[];
 }
 
 export interface CreateAgentInput {

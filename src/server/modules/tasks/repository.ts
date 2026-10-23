@@ -1,4 +1,4 @@
-import type { TaskDto } from "../../../shared/contracts";
+import type { TaskDto, TaskTagDto } from "../../../shared/contracts";
 import type { ReaderScope } from "../../shared/authorize";
 import { boolFromDb } from "../../shared/db";
 import { appendReadAccessPredicate } from "../../shared/read-access";
@@ -14,6 +14,8 @@ export type TaskRow = {
 };
 
 export type TaskListScope = {
+  tagId?: string;
+  untagged?: boolean;
   agentId?: string;
   done?: boolean;
   readerAccess?: ReaderScope;
@@ -26,6 +28,7 @@ export type EntryOwnerRow = {
 };
 
 export type InsertTaskRecord = {
+  tagIds?: string[];
   id: string;
   agentId: string;
   entryId: string | null;
@@ -35,6 +38,8 @@ export type InsertTaskRecord = {
 };
 
 export type PatchTaskRecord = {
+  addTagIds?: string[];
+  removeTagIds?: string[];
   title?: string;
   dueAt?: string | null;
   done?: boolean;
@@ -52,7 +57,7 @@ function ownerLifecycleClause(policy: TaskOwnerWritePolicy): string {
   )`;
 }
 
-export function taskDto(row: TaskRow): TaskDto {
+export function taskDto(row: TaskRow, tags: TaskTagDto[] = []): TaskDto {
   return {
     id: row.id,
     agent_id: row.agent_id,
@@ -61,12 +66,14 @@ export function taskDto(row: TaskRow): TaskDto {
     done: boolFromDb(row.done),
     due_at: row.due_at,
     created_at: row.created_at,
+    tags,
   };
 }
 
 export async function listTasks(db: D1Database, scope: TaskListScope): Promise<TaskRow[]> {
   const where: string[] = [];
   const bindings: unknown[] = [];
+  appendTagFilter(scope, where, bindings);
 
   if (scope.agentId !== undefined) {
     where.push("agent_id = ?");
@@ -162,7 +169,11 @@ export async function insertTask(
     record.entryId,
     record.agentId,
   );
-  return statement.first<TaskRow>();
+  if (!record.tagIds?.length) return statement.first<TaskRow>();
+  const result = await db.batch<TaskRow>([statement, db.prepare(
+    "INSERT INTO task_tag_links (task_id, tag_id) SELECT ?, value FROM json_each(?) WHERE EXISTS (SELECT 1 FROM tasks WHERE id = ?) ON CONFLICT(task_id, tag_id) DO NOTHING",
+  ).bind(record.id, JSON.stringify(record.tagIds), record.id)]);
+  return result[0]?.results[0] ?? null;
 }
 
 export async function patchTask(
@@ -187,6 +198,7 @@ export async function patchTask(
     assignments.push("done = ?");
     bindings.push(patch.done ? 1 : 0);
   }
+  if (!assignments.length) assignments.push("id = id");
 
   const ownerClause = ownerId === undefined ? "" : " AND agent_id = ?";
   const lifecycleClause = ownerLifecycleClause(ownerWritePolicy);
@@ -199,7 +211,18 @@ export async function patchTask(
     WHERE id = ?${ownerClause}${lifecycleClause}
     RETURNING id, agent_id, entry_id, title, done, due_at, created_at
   `).bind(...bindings);
-  return statement.first<TaskRow>();
+  const tagStatements: D1PreparedStatement[] = [];
+  const guard = `EXISTS (SELECT 1 FROM tasks WHERE id = ?${ownerClause}${lifecycleClause})`;
+  const guardArgs = ownerId === undefined ? [id] : [id, ownerId];
+  if (patch.addTagIds?.length) tagStatements.push(db.prepare(
+    `INSERT INTO task_tag_links (task_id, tag_id) SELECT ?, value FROM json_each(?) WHERE ${guard} ON CONFLICT(task_id, tag_id) DO NOTHING`,
+  ).bind(id, JSON.stringify(patch.addTagIds), ...guardArgs));
+  if (patch.removeTagIds?.length) tagStatements.push(db.prepare(
+    `DELETE FROM task_tag_links WHERE task_id = ? AND tag_id IN (SELECT value FROM json_each(?)) AND ${guard}`,
+  ).bind(id, JSON.stringify(patch.removeTagIds), ...guardArgs));
+  if (!tagStatements.length) return statement.first<TaskRow>();
+  const result = await db.batch<TaskRow>([statement, ...tagStatements]);
+  return result[0]?.results[0] ?? null;
 }
 
 export async function deleteTask(
@@ -223,13 +246,21 @@ export function prepareDetachEntryTasks(db: D1Database, entryId: string): D1Prep
   return db.prepare("UPDATE tasks SET entry_id = NULL WHERE entry_id = ?").bind(entryId);
 }
 
-export async function clearCompletedTasks(db: D1Database, ownerId: string | undefined, policy: TaskOwnerWritePolicy): Promise<number> {
+export function appendTagFilter(scope: { tagId?: string; untagged?: boolean }, where: string[], bindings: unknown[]) {
+  if (scope.tagId) { where.push("EXISTS (SELECT 1 FROM task_tag_links l WHERE l.task_id = tasks.id AND l.tag_id = ?)"); bindings.push(scope.tagId); }
+  if (scope.untagged) where.push("NOT EXISTS (SELECT 1 FROM task_tag_links l WHERE l.task_id = tasks.id)");
+}
+
+export async function clearCompletedTasks(db: D1Database, ownerId: string | undefined, policy: TaskOwnerWritePolicy, tags: { tagId?: string; untagged?: boolean } = {}): Promise<number> {
   // One atomic statement; no per-task loop, pagination or automatic retry.
-  const ownerClause = ownerId === undefined ? "" : " AND agent_id = ?";
-  const statement = db.prepare(`DELETE FROM tasks WHERE done = 1${ownerClause}${ownerLifecycleClause(policy)}`);
-  const result = await (ownerId === undefined ? statement : statement.bind(ownerId)).run();
+  const where = ["done = 1"];
+  const bindings: unknown[] = [];
+  if (ownerId !== undefined) { where.push("agent_id = ?"); bindings.push(ownerId); }
+  appendTagFilter(tags, where, bindings);
+  const statement = db.prepare(`DELETE FROM tasks WHERE ${where.join(" AND ")}${ownerLifecycleClause(policy)} RETURNING id`).bind(...bindings);
+  const result = await statement.all<{ id: string }>();
   if (!result.success) throw new Error("Completed task cleanup failed");
-  return result.meta.changes ?? 0;
+  return result.results.length;
 }
 
 export function prepareMoveAgentTasksToManual(db: D1Database, agentId: string): D1PreparedStatement {

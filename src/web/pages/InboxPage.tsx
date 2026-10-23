@@ -6,6 +6,7 @@ import { FeedView } from "../components/EntryViews";
 import { useAppShell } from "../components/AppShell";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui";
 import { useEntries } from "../hooks/useEntries";
+import { useEntryNavigation } from "../hooks/useEntryNavigation";
 import { EntryPagination, MarkReadButton } from "../components/MarkReadButton";
 
 export type InboxKind = "all" | "important" | "archive";
@@ -28,7 +29,8 @@ export function InboxPage({ kind }: { kind: InboxKind }) {
   const [readFilter, setReadFilter] = useState<ReadFilter>("all");
   const [completion, setCompletion] = useState<CompletionFilter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [reading, setReading] = useState(false);
+  const { entryId, reading, openEntry, closeEntry } = useEntryNavigation();
+  const displayedId = entryId ?? selectedId;
   const [agentId, setAgentId] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -59,13 +61,12 @@ export function InboxPage({ kind }: { kind: InboxKind }) {
     if (!selectedId || !result.items.some((entry) => entry.id === selectedId)) setSelectedId(result.items[0]?.id ?? null);
   }, [result.items, selectedId]);
   useEffect(() => {
-    setReading(false);
     setSelectedId(null);
   }, [kind]);
 
   const select = (id: string) => {
     setSelectedId(id);
-    setReading(true);
+    openEntry(id);
   };
   const copy = pageCopy[kind];
   return (
@@ -102,14 +103,14 @@ export function InboxPage({ kind }: { kind: InboxKind }) {
         </header>
         <div className="entries-scroll">
           {result.loading ? <LoadingState /> : result.error ? <ErrorState message={result.error} onRetry={result.refresh} /> : (
-            <FeedView entries={rows} agents={agents} selectedId={selectedId} onSelect={select} emptyTitle={deferredSearch ? "没有符合条件的信息" : undefined} />
+            <FeedView entries={rows} agents={agents} selectedId={displayedId} onSelect={select} emptyTitle={deferredSearch ? "没有符合条件的信息" : undefined} />
           )}
         </div>
         <EntryPagination result={result} />
         <footer className="entry-count">本页 {rows.length} 条信息</footer>
       </section>
       <section className="reader-pane">
-        {selectedId ? <EntryReader entryId={selectedId} agents={agents} onChanged={result.refresh} onBack={() => setReading(false)} /> : <EmptyState title="选择一条信息" detail="正文与历史版本会显示在这里。" />}
+        {displayedId ? <EntryReader entryId={displayedId} agents={agents} onChanged={result.refresh} onBack={closeEntry} /> : <EmptyState title="选择一条信息" detail="正文与历史版本会显示在这里。" />}
       </section>
     </div>
   );

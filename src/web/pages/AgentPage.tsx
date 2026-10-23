@@ -8,6 +8,7 @@ import { EntryReader } from "../components/EntryReader";
 import { CompletionTabs, FeedView, ListView, ReportView } from "../components/EntryViews";
 import { AgentBadge, EmptyState, ErrorState, LoadingState, useToast } from "../components/ui";
 import { useEntries } from "../hooks/useEntries";
+import { useEntryNavigation } from "../hooks/useEntryNavigation";
 import { relativeTime } from "../lib/format";
 import { EntryPagination, MarkReadButton } from "../components/MarkReadButton";
 
@@ -18,7 +19,8 @@ export function AgentPage() {
   const agent = agents.find((item) => item.id === agentId);
   const [completion, setCompletion] = useState<CompletionFilter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [reading, setReading] = useState(false);
+  const { entryId, reading, openEntry, closeEntry } = useEntryNavigation();
+  const displayedId = entryId ?? selectedId;
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search.trim());
   const query = useMemo(() => ({
@@ -34,7 +36,6 @@ export function AgentPage() {
 
   useEffect(() => {
     setSelectedId(null);
-    setReading(false);
     setCompletion("all");
     setSearch("");
   }, [agentId]);
@@ -83,13 +84,13 @@ export function AgentPage() {
           <div className="agent-feed-header">{commonHeader}</div>
           <div className="completion-row"><CompletionTabs value={completion} onChange={setCompletion} /></div>
           <div className="entries-scroll">
-            {result.loading ? <LoadingState /> : result.error ? <ErrorState message={result.error} onRetry={result.refresh} /> : <FeedView entries={result.items} agents={agents} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setReading(true); }} />}
+            {result.loading ? <LoadingState /> : result.error ? <ErrorState message={result.error} onRetry={result.refresh} /> : <FeedView entries={result.items} agents={agents} selectedId={displayedId} onSelect={(id) => { setSelectedId(id); openEntry(id); }} />}
           </div>
           <EntryPagination result={result} />
           <footer className="entry-count">本页 {loadedCount} 条信息 · 最近上报 {relativeTime(agent.last_report_at)}</footer>
         </section>
         <section className="reader-pane">
-          {selectedId ? <EntryReader entryId={selectedId} agents={agents} onChanged={result.refresh} onBack={() => setReading(false)} /> : <EmptyState title="选择一条信息" />}
+          {displayedId ? <EntryReader entryId={displayedId} agents={agents} onChanged={result.refresh} onBack={closeEntry} /> : <EmptyState title="选择一条信息" />}
         </section>
       </div>
     );

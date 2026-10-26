@@ -11,6 +11,7 @@ import { purgeAgentAttachmentsStep } from "./modules/attachments/service";
 import { registerAgentRoutes } from "./modules/agents/routes";
 import { registerReaderRoutes } from "./modules/readers/routes";
 import { registerDiscoveryRoutes } from "./discovery/routes";
+import { registerSettingsRoutes } from "./modules/settings/routes";
 import { applyPrivateHeaders, requestContext } from "./shared/http";
 import { readerAccessLogMiddleware } from "./shared/access-log";
 import { readerRateLimitMiddleware } from "./shared/reader-rate-limit";
@@ -47,7 +48,7 @@ app.use("/api/*", readerAccessLogMiddleware());
 // 认证 → reader 限流 → 路径准入；被拒绝的路径也消耗身份额度。
 app.use("/api", requireApiIdentity());
 app.use("/api/*", async (c, next) => {
-  if (isUngatedLogin(c)) {
+  if (isUngatedLogin(c) || (c.req.method === "GET" && c.req.path === "/api/v1/ui-theme")) {
     await next();
     return;
   }
@@ -68,6 +69,7 @@ registerEntryRoutes(app);
 registerAttachmentRoutes(app);
 registerTaskRoutes(app);
 registerTaskTagRoutes(app);
+registerSettingsRoutes(app);
 
 app.get("/api/health", (c) => c.json({ status: "ok" }));
 

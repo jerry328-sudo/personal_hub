@@ -6,6 +6,16 @@ import { Dialog } from "./ui";
 
 const MEDIA_PATH = /^\/api\/v1\/media\/[A-Za-z0-9_-]+$/;
 
+interface MarkdownNode {
+  type: string;
+  tagName?: string;
+  children?: readonly MarkdownNode[];
+}
+
+function containsImage(node: MarkdownNode): boolean {
+  return node.tagName === "img" || Boolean(node.children?.some(containsImage));
+}
+
 export function isAllowedLink(url: string): boolean {
   if (url.startsWith("#")) return true;
   try {
@@ -61,6 +71,10 @@ export function MarkdownContent({ content }: { content: string }) {
           return isAllowedLink(url) ? url : "";
         }}
         components={{
+          table: ({ children }) => <div className="prose-table-scroll"><table>{children}</table></div>,
+          p: ({ node, children }) => node && containsImage(node)
+            ? <div className="prose-image-paragraph">{children}</div>
+            : <p>{children}</p>,
           img: ({ src, alt }) => <AttachmentImage src={src} alt={alt} />,
           a: ({ href, children }) => (
             <a href={isAllowedLink(href ?? "") ? href : undefined} target="_blank" rel="noreferrer noopener">{children}</a>

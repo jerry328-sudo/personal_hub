@@ -37,6 +37,7 @@ export function EntryReader({ entryId, agents, onChanged, onBack, embedded = fal
   const [taskOpen, setTaskOpen] = useState(false);
   const [imageOpen, setImageOpen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback((signal?: AbortSignal) => {
@@ -61,6 +62,7 @@ export function EntryReader({ entryId, agents, onChanged, onBack, embedded = fal
     setEntry(null);
     setVersion(null);
     setSelectedVersion(null);
+    setArchiveOpen(false);
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
@@ -88,7 +90,7 @@ export function EntryReader({ entryId, agents, onChanged, onBack, embedded = fal
   const displayedAt = isHistory && version ? version.created_at : entry?.updated_at;
 
   const mutateState = async (patch: { completed?: boolean; archived?: boolean; read_version?: number }, success: string) => {
-    if (!entry) return;
+    if (!entry) return false;
     setBusy(true);
     try {
       const state = await entriesApi.setState(entry.id, patch);
@@ -96,8 +98,10 @@ export function EntryReader({ entryId, agents, onChanged, onBack, embedded = fal
       notifyDataChanged();
       onChanged?.();
       showToast(success);
+      return true;
     } catch (reason) {
       showToast(reason instanceof Error ? reason.message : "状态更新失败", "error");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -171,7 +175,7 @@ export function EntryReader({ entryId, agents, onChanged, onBack, embedded = fal
           {entry.completed ? <RotateCcw aria-hidden="true" /> : <CircleCheck aria-hidden="true" />}
           {entry.completed ? "恢复未完成" : "标为已完成"}
         </button>
-        <button className="btn" type="button" title={entry.archived ? "取消归档不会恢复已删除的待办" : "归档会删除该记录关联的全部待办"} disabled={busy} onClick={() => void mutateState({ archived: !entry.archived }, entry.archived ? "已移出归档" : "已归档，关联待办已删除") }>
+        <button className="btn" type="button" title={entry.archived ? "取消归档不会恢复已删除的待办" : "归档会删除该记录关联的全部待办"} disabled={busy} onClick={() => entry.archived ? void mutateState({ archived: false }, "已移出归档") : setArchiveOpen(true)}>
           {entry.archived ? <ArchiveRestore aria-hidden="true" /> : <Archive aria-hidden="true" />}
           {entry.archived ? "取消归档" : "归档"}
         </button>
@@ -220,6 +224,18 @@ export function EntryReader({ entryId, agents, onChanged, onBack, embedded = fal
         </article>
       </div>
       <TaskForm open={taskOpen} onClose={() => setTaskOpen(false)} agents={agents} entry={entry} />
+      <ConfirmDialog
+        open={archiveOpen}
+        title={`归档「${entry.title}」？`}
+        description="归档会删除这条信息关联的全部待办，包括已完成的待办。信息和历史版本仍可查阅，取消归档不会恢复已删除的待办。"
+        confirmLabel="归档并删除关联待办"
+        danger
+        busy={busy}
+        onClose={() => { if (!busy) setArchiveOpen(false); }}
+        onConfirm={async () => {
+          if (await mutateState({ archived: true }, "已归档，关联待办已删除")) setArchiveOpen(false);
+        }}
+      />
       <Dialog open={imageOpen} title="添加图片" onClose={() => setImageOpen(false)}>
         <p className="dialog-description">图片将保存到私有 R2，并以新版本追加到正文末尾。PNG、JPEG、WebP 或 GIF，最大 10 MiB。</p>
         <label className={`file-drop ${busy ? "disabled" : ""}`}>

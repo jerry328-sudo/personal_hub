@@ -5,6 +5,7 @@ import { useAppShell } from "../components/AppShell";
 import { useToast } from "../components/ui";
 import { useSession } from "../hooks/useSession";
 import { PasskeySettings } from "../components/PasskeySettings";
+import { ThemeSettings } from "../themes/ThemeSettings";
 
 export function SecurityPage() {
   const { openNavigation } = useAppShell();
@@ -42,6 +43,7 @@ export function SecurityPage() {
 
   return <div className="security-page">
     <header className="security-heading"><button type="button" className="icon-btn" aria-label="打开导航" onClick={openNavigation}><Menu /></button><h1>登录与安全</h1></header>
+    <ThemeSettings />
     <PasskeySettings />
     <section className="security-card" aria-labelledby="mcp-connections-title">
       <h2 id="mcp-connections-title">MCP 客户端授权</h2>

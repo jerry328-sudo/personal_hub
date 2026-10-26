@@ -256,3 +256,10 @@ export interface PurgeProgressDto {
   removed_objects: number;
   remaining_objects: number;
 }
+
+export const SITE_THEME_IDS = ["current", "template"] as const;
+export type SiteThemeId = (typeof SITE_THEME_IDS)[number];
+
+export interface SiteThemeSettings {
+  theme: SiteThemeId;
+}

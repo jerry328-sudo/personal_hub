@@ -1,4 +1,4 @@
-:root {
+:root[data-site-theme="current"] {
   color-scheme: light;
   --bg: #fff;
   --sidebar: #f2f5f5;
@@ -26,7 +26,7 @@
   background: var(--bg);
 }
 
-:root[data-theme="dark"] {
+:root[data-site-theme="current"][data-theme="dark"] {
   color-scheme: dark;
   --bg: #171d1a;
   --sidebar: #111713;

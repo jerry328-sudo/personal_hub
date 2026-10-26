@@ -5,6 +5,7 @@
 - `current/`：经典主题，保留原有外壳、收件箱与样式。
 - `template/`：简洁主题，提供新的外壳、收件箱和阅读呈现。
 - `shared/base.css`：共用控件、正文、弹窗及业务页面的基础样式。
+- `shared/panel.css`、各主题下的 `panel.css`：MCP 面板共用结构与对应主题样式，与网页主题文件放在同一目录中。
 - `types.ts`：`ThemeComponents` 约定。每套主题提供 `AppShell`、`InboxPage`、`AgentPage` 和 `EntryPage`；待办、管理、安全及登录页面可按需覆盖，否则使用共用页面。
 - `registry.ts`：主题名称、说明及组件入口。
 - `SiteThemeProvider.tsx`、`ThemeSettings.tsx`：读取、保存和选择全局主题。
@@ -13,10 +14,10 @@
 
 ## 添加主题
 
-1. 在 `src/shared/contracts.ts` 的 `SITE_THEME_IDS` 中加入稳定的主题编号，供前后端共同校验。
+1. 在 `src/shared/contracts.ts` 的 `SITE_THEME_IDS` 中加入稳定的主题编号，并在 `src/shared/site-theme.ts` 中补充名称，供网页、面板与服务端共同使用。
 2. 在本目录新建对应子目录，实现满足 `ThemeComponents` 的组件，并从入口文件导出 `theme`。
 3. 在 `registry.ts` 注册名称、说明和组件。
-4. 在 `src/web/main.tsx` 中导入主题样式，保持共用基础样式先加载。
+4. 在 `src/web/main.tsx` 中导入网页主题样式，在 `src/panel/main.tsx` 中导入对应的 `panel.css`，保持共用基础样式先加载。
 5. 验证登录、主要业务页面、主题切换、深浅色及移动端表现。
 
 新增主题编号不需要单独迁移数据库；全局设置保存的是主题编号字符串。
@@ -24,6 +25,8 @@
 ## 生效规则
 
 页面加载时通过 `GET /api/v1/ui-theme` 读取主题；管理员在“登录与安全 → 站点主题”保存后，当前页面立即应用。其他已打开的页面手动刷新后读取新设置，不增加轮询、推送或自动同步监听。读取失败会提供重试，保存失败保留当前主题。
+
+MCP 面板打开时从 `open_hub_panel` 的授权快照读取同一全局主题；点击面板现有“刷新”按钮或重新打开面板会读取最新选择，不创建第二份主题设置。设置不嵌入缓存的公共 HTML，避免公共资源缓存导致主题过期；宿主提供的日间／夜间模式仍独立生效。
 
 `data-site-theme` 表示全局界面主题。`data-theme` 表示本机的日间、夜间或随系统外观，两者独立，后者继续沿用本机偏好。
 

@@ -1,0 +1,4 @@
+html[data-site-theme=current]{color-scheme:light;--bg:#fff;--soft:#f7f9f8;--text:#24352d;--body:#4b5b52;--muted:#76817c;--line:#e7ece9;--strong:#dce4df;--green:#34775e;--tint:#edf5f0;--radius:7px;font-family:Inter,"Noto Sans SC","Microsoft YaHei",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);background:var(--bg);font-size:15px}
+html[data-site-theme=current][data-theme=dark]{--bg:#171c19;--soft:#1c231f;--text:#e4ebe6;--body:#c2cec6;--muted:#99a99e;--line:#303d34;--strong:#3a4c40;--green:#67b68f;--tint:#243a2d}html[data-site-theme=current][data-theme=dark] .filters button.active{background:#2c4938;border-color:#2c4938}html[data-site-theme=current][data-theme=dark] .button.primary{color:#101c14}html[data-site-theme=current][data-theme=dark] .error-banner{background:#422c27;color:#f2b5a7}
+html[data-site-theme=current]{--hover:#f0f5f2}
+html[data-site-theme=current][data-theme=dark]{color-scheme:dark;--hover:#28362e}

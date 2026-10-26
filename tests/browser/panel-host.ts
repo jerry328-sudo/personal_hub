@@ -1,8 +1,9 @@
 import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { AgentDto, EntryFullDto, EntryVersionDto, TaskDto, TaskTagDto } from "../../src/shared/contracts";
+import type { AgentDto, EntryFullDto, EntryVersionDto, SiteThemeId, TaskDto, TaskTagDto } from "../../src/shared/contracts";
 import type { PanelSnapshot } from "../../src/shared/panel";
 import { HUB_ICONS } from "../../src/shared/hub-icon";
+import { resolveSiteTheme } from "../../src/shared/site-theme";
 
 // A local test host, never included in the plugin or Worker build. No production connection.
 const ordinary = new URLSearchParams(location.search).get("role") === "agent";
@@ -30,11 +31,18 @@ if (sidebarIcon) sidebarIcon.src = HUB_ICONS.find((icon) => icon.theme === (new 
 const counter = document.querySelector("#context-count")!;
 const status = document.querySelector("#test-status")!;
 const calls: string[] = [];
+let siteTheme = resolveSiteTheme(new URLSearchParams(location.search).get("site_theme"));
+const themeSelect = document.createElement("select");
+themeSelect.setAttribute("aria-label", "模拟站点主题");
+themeSelect.innerHTML = '<option value="current">经典主题</option><option value="template">简洁主题</option>';
+themeSelect.value = siteTheme;
+themeSelect.addEventListener("change", () => { siteTheme = themeSelect.value as SiteThemeId; });
+document.querySelector<HTMLElement>("footer")!.appendChild(themeSelect);
 const ok = (result: unknown): CallToolResult => ({ content: [], structuredContent: { result } });
 const fail = (message: string): CallToolResult => ({ isError: true, content: [], structuredContent: { result: { error: { code: "not_found", message } } } });
 function snapshot(): PanelSnapshot {
   const inbox = entries.filter((item) => !item.archived);
-  return { identity, app_origin: "https://personal-hub.echem.ai", sources: { items: sources, next_cursor: null },
+  return { identity, site_theme: siteTheme, app_origin: "https://personal-hub.echem.ai", sources: { items: sources, next_cursor: null },
     entries: { items: inbox.slice(0, 50), next_cursor: inbox.length > 50 ? "50" : null }, entry: inbox[0] ?? null };
 }
 function versionOf(entry: EntryFullDto, version: number): EntryVersionDto {

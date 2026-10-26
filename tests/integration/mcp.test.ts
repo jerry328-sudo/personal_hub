@@ -181,6 +181,25 @@ describe("Codex Hub MCP App", () => {
     expect(resource.text).not.toContain('src="./main.tsx"');
     expect(resource._meta?.["openai/ui"]).toEqual({ availableDisplayModes: ["fullscreen"], preferredDisplayMode: "fullscreen" });
   });
+  it("reads the website global theme on every panel open for ordinary, manager and read-only connections", async () => {
+    const cookie = await login();
+    const source = await agent(cookie, { name: "Shared theme source" });
+    const manager = await agent(cookie, { role: "manager", name: "Shared theme manager" });
+    const reader = await agent(cookie, { role: "reader", name: "Shared theme reader", read_access: { mode: "all" } });
+    const save = (theme: string) => request("/api/v1/admin/ui-theme", json("PUT", { theme }, { Cookie: cookie, Origin: origin }));
+    try {
+      for (const theme of ["current", "template", "current"]) {
+        expect((await save(theme)).status).toBe(200);
+        expect(await (await request("/api/v1/ui-theme")).json()).toEqual({ theme });
+        for (const connection of [source, manager, reader]) {
+          const opened = (await tool(connection.key.secret, "open_hub_panel")).result!;
+          expect(opened.isError).not.toBe(true);
+          expect((opened._meta?.personalHub as PanelSnapshot).site_theme).toBe(theme);
+          expect(JSON.stringify(opened)).not.toContain(connection.key.secret);
+        }
+      }
+    } finally { await save("current"); }
+  });
   it("caches public documentation encoding by role without changing client response formats", async () => {
     const cookie = await login(); const manager = await agent(cookie, { role: "manager" });
     const reader = await agent(cookie, { role: "reader", read_access: { mode: "all" } });

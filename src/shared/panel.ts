@@ -1,4 +1,4 @@
-import type { EntryBriefDto, EntryFullDto, Page, ReaderSourceDto } from "./contracts";
+import type { EntryBriefDto, EntryFullDto, Page, ReaderSourceDto, SiteThemeId } from "./contracts";
 
 export interface PanelIdentity {
   role: "admin" | "agent" | "manager" | "reader";
@@ -13,6 +13,7 @@ export type PanelSource = ReaderSourceDto & { role?: "agent" | "manager" | "read
 
 export interface PanelSnapshot {
   identity: PanelIdentity;
+  site_theme: SiteThemeId;
   app_origin: string;
   sources: Page<PanelSource>;
   entries: Page<EntryBriefDto>;

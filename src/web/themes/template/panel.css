@@ -1,0 +1,134 @@
+html[data-site-theme="template"] {
+  --bg: #f4f4f1;
+  --soft: #fff;
+  --text: #16181d;
+  --body: #454a53;
+  --muted: #5f646e;
+  --line: #dcdcd6;
+  --strong: #c9c9c2;
+  --green: #2b4ac7;
+  --tint: #e9edfb;
+  --hover: #f7f7f4;
+  --radius: 8px;
+  color-scheme: light;
+  color: var(--text);
+  background: var(--bg);
+  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+}
+html[data-site-theme="template"][data-theme="dark"] {
+  --bg: #121417;
+  --soft: #1a1d21;
+  --text: #e8eaed;
+  --body: #b4b9c2;
+  --muted: #9aa0aa;
+  --line: #2c3036;
+  --strong: #3a3f46;
+  --green: #8ca2ff;
+  --tint: #23294a;
+  --hover: #202328;
+  color-scheme: dark;
+}
+html[data-site-theme="template"] .app-header { min-height: 58px; height: 58px; padding: 0 24px; background: var(--soft); }
+html[data-site-theme="template"] .header-actions { gap: 14px; }
+html[data-site-theme="template"] .main-tabs { gap: 6px; padding: 4px; height: auto; min-height: 36px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+html[data-site-theme="template"] .main-tabs button { font-size: 13px; min-height: 30px; min-width: 64px; padding: 0 12px; border-radius: 5px; }
+html[data-site-theme="template"] .main-tabs button[aria-current="page"] { background: var(--soft); color: var(--green); }
+html[data-site-theme="template"] .main-tabs button[aria-current="page"]:after { display: none; }
+html[data-site-theme="template"] .workspace:not(.full) { display: block; padding: 24px; background: var(--bg); overflow: auto; }
+html[data-site-theme="template"] .workspace:not(.full) .list-pane { display: flex; height: 100%; max-width: 1100px; margin: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); overflow: hidden; }
+html[data-site-theme="template"] .workspace:not(.full) .reader-pane { display: none; }
+html[data-site-theme="template"] .workspace[data-reading="true"] .list-pane { display: none; }
+html[data-site-theme="template"] .workspace[data-reading="true"] .reader-pane { display: block; width: 100%; height: auto; min-height: 100%; max-width: 1100px; margin: auto; padding: 24px 32px 36px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); overflow: visible; }
+html[data-site-theme="template"] .back-button { display: inline-flex; align-items: center; gap: 6px; padding: 0 0 18px; color: var(--muted); min-height: 36px; font-size: 13px; }
+html[data-site-theme="template"] .back-button svg { width: 16px; height: 16px; }
+html[data-site-theme="template"] .list-controls { padding: 22px 24px 14px; border-bottom: 1px solid var(--line); background: var(--soft); }
+html[data-site-theme="template"] .list-title { margin-bottom: 14px; gap: 12px; }
+html[data-site-theme="template"] .list-title h1 { font-size: 23px; }
+html[data-site-theme="template"] .record-count { font-size: 12px; }
+html[data-site-theme="template"] .search-row { flex-wrap: nowrap; margin-bottom: 0; }
+html[data-site-theme="template"] .search-field { background: var(--soft); border-color: var(--strong); }
+html[data-site-theme="template"] .filters { gap: 3px; }
+html[data-site-theme="template"] .filters button { min-height: 34px; padding: 0 12px; font-size: 12px; border-color: transparent; }
+html[data-site-theme="template"] .filters button.active { background: var(--tint); border-color: var(--tint); color: var(--green); }
+html[data-site-theme="template"] .entry-row { min-height: 95px; gap: 16px; padding: 18px 24px; }
+html[data-site-theme="template"] .entry-row.selected { background: var(--tint); }
+html[data-site-theme="template"] .entry-row.selected:before { display: none; }
+html[data-site-theme="template"] .entry-row:hover:not(.selected) { background: var(--hover); }
+html[data-site-theme="template"] .row-open strong { font-size: 15px; line-height: 1.6; }
+html[data-site-theme="template"] .row-meta, html[data-site-theme="template"] .row-summary { font-size: 12px; line-height: 1.6; }
+html[data-site-theme="template"] .reader-document { max-width: 800px; margin: auto; }
+html[data-site-theme="template"] .reader-top { flex-wrap: wrap; gap: 10px 20px; margin-bottom: 22px; }
+html[data-site-theme="template"] .reader-meta { font-size: 12px; white-space: normal; }
+html[data-site-theme="template"] .reader-actions { flex-wrap: wrap; gap: 4px; }
+html[data-site-theme="template"] .reader-actions button { min-height: 36px; font-size: 12px; gap: 5px; }
+html[data-site-theme="template"] .reader-actions button:hover { background: var(--hover); }
+html[data-site-theme="template"] .version-control { padding-left: 12px; margin-left: 4px; }
+html[data-site-theme="template"] .version-control select { height: 36px; width: 100px; font-size: 12px; }
+html[data-site-theme="template"] .entry-title { font-size: 27px; letter-spacing: -.6px; }
+html[data-site-theme="template"] .version-note { font-size: 12px; margin-bottom: 28px; }
+html[data-site-theme="template"] .article-body { font-size: 15px; line-height: 1.85; }
+html[data-site-theme="template"] .article-body h2 { font-size: 21px; }
+html[data-site-theme="template"] .button { border-color: var(--strong); background: var(--soft); font-size: 13px; min-height: 38px; }
+html[data-site-theme="template"] .button:hover { background: var(--hover); border-color: var(--strong); }
+html[data-site-theme="template"] .button.primary { background: var(--green); border-color: var(--green); color: #fff; }
+html[data-site-theme="template"][data-theme="dark"] .button.primary { color: #10131e; }
+html[data-site-theme="template"] .button.primary:hover { filter: brightness(.95); }
+html[data-site-theme="template"] .button.green-outline { border-color: var(--strong); color: var(--green); }
+html[data-site-theme="template"] .button.small { min-height: 34px; font-size: 12px; }
+html[data-site-theme="template"] .full-view { max-width: 1100px; padding: 24px; }
+html[data-site-theme="template"] .view-heading { margin-bottom: 22px; }
+html[data-site-theme="template"] .view-heading h1, html[data-site-theme="template"] .board-heading h1 { font-size: 24px; }
+html[data-site-theme="template"] .view-heading p, html[data-site-theme="template"] .board-heading p { font-size: 13px; }
+html[data-site-theme="template"] .source-row, html[data-site-theme="template"] .source-card { padding: 18px; background: var(--soft); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 10px; }
+html[data-site-theme="template"] .source-copy strong { font-size: 15px; }
+html[data-site-theme="template"] .source-copy p { font-size: 12px; }
+html[data-site-theme="template"] .source-symbol { background: var(--tint); color: var(--green); }
+html[data-site-theme="template"] .source-card-heading { padding: 0; }
+html[data-site-theme="template"] .source-card-body { padding: 16px 0 0; }
+html[data-site-theme="template"] .task-row { background: var(--soft); padding: 18px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 10px; }
+html[data-site-theme="template"] .task-copy { min-width: 0; overflow-wrap: anywhere; }
+html[data-site-theme="template"] .task-copy strong { font-size: 15px; }
+html[data-site-theme="template"] .task-copy p { font-size: 12px; }
+html[data-site-theme="template"] .selection-tray { background: var(--soft); padding: 12px 24px; gap: 14px; }
+html[data-site-theme="template"] .selection-copy strong { font-size: 14px; }
+html[data-site-theme="template"] .selection-copy span { font-size: 12px; }
+html[data-site-theme="template"] dialog { background: var(--soft); }
+html[data-site-theme="template"] dialog::backdrop { background: #0005; }
+html[data-site-theme="template"] .management-note { background: var(--bg); }
+html[data-site-theme="template"] .management-row { background: var(--soft); }
+html[data-site-theme="template"] .form-field input, html[data-site-theme="template"] .form-field select { background: var(--soft); color: var(--text); }
+html[data-site-theme="template"] .toast { background: var(--soft); }
+html[data-site-theme="template"] .error-banner { background: #fbe9e7; color: #a8231b; }
+html[data-site-theme="template"][data-theme="dark"] .error-banner { background: #3a1e1c; color: #ff8a80; }
+@media (max-width: 820px) {
+  html[data-site-theme="template"] .app-header { padding: 0 16px; }
+  html[data-site-theme="template"] .main-tabs { flex: 0 0 auto; width: auto; margin: 0; }
+  html[data-site-theme="template"] .main-tabs button { min-width: 48px; padding: 0 9px; }
+  html[data-site-theme="template"] .workspace:not(.full) { padding: 16px; }
+  html[data-site-theme="template"] .workspace[data-reading="true"] .reader-pane { padding: 20px; }
+  html[data-site-theme="template"] .full-view { padding: 20px; }
+}
+@media (max-width: 560px) {
+  html[data-site-theme="template"] .app-header { flex-wrap: wrap; height: auto; min-height: 96px; padding: 10px 12px; gap: 8px; }
+  html[data-site-theme="template"] .app-header .brand { flex: 0 0 auto; }
+  html[data-site-theme="template"] .main-tabs { order: 3; flex: 1 0 100%; width: 100%; justify-content: space-between; }
+  html[data-site-theme="template"] .main-tabs button { flex: 1; min-height: 32px; }
+  html[data-site-theme="template"] .header-actions { gap: 8px; margin-left: auto; }
+  html[data-site-theme="template"] .workspace:not(.full) { padding: 12px; }
+  html[data-site-theme="template"] .list-controls { padding: 18px 14px 12px; }
+  html[data-site-theme="template"] .list-heading { flex-wrap: wrap; }
+  html[data-site-theme="template"] .search-row { flex-wrap: wrap; gap: 8px; }
+  html[data-site-theme="template"] .search-row select { width: 100%; }
+  html[data-site-theme="template"] .entry-row { padding: 15px 14px; gap: 12px; }
+  html[data-site-theme="template"] .workspace[data-reading="true"] .reader-pane { padding: 18px 14px; }
+  html[data-site-theme="template"] .entry-title { font-size: 23px; }
+  html[data-site-theme="template"] .reader-actions { gap: 2px; }
+  html[data-site-theme="template"] .reader-actions button { padding: 0 6px; }
+  html[data-site-theme="template"] .full-view { padding: 16px 12px; }
+  html[data-site-theme="template"] .source-row { gap: 12px; padding: 14px; flex-wrap: wrap; }
+  html[data-site-theme="template"] .task-row { padding: 14px; gap: 10px; }
+  html[data-site-theme="template"] .task-toolbar { gap: 10px; }
+  html[data-site-theme="template"] .selection-tray { padding: 10px 12px; gap: 10px; }
+  html[data-site-theme="template"] .selection-tray .primary { min-width: 100px; padding: 0 10px; }
+}

@@ -25,6 +25,7 @@ import { PANEL_RESOURCE_URI, PANEL_TOOL_NAME, type PanelSnapshot } from "../../s
 import type { OpenAIUiToolMetadata } from "@openai/mcp-extensions/server";
 import { registerPanelResource } from "./panel";
 import { HUB_ICONS } from "../../shared/hub-icon";
+import { getSiteTheme } from "../modules/settings/service";
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const empty = z.object({}).strict();
@@ -130,11 +131,12 @@ export function createMcpServer(ctx: ServiceContext, scopes: readonly string[], 
   if (scopeAllows(scopes, "hub:read")) {
     registerPanelResource(server, async () => { ctx = { ...ctx, actor: await resolvePrincipal(ctx.env, principal) }; }, ctx.env);
     add(PANEL_TOOL_NAME, "打开 Personal Hub 面板，阅读来源、条目与版本，管理待办，将选中内容附到当前对话。", empty, all, "hub:read", async () => {
-      const [sources, inbox] = await Promise.all([
+      const [sources, inbox, settings] = await Promise.all([
         role === "reader" ? readers.listReadableAgents(ctx, { limit: 100 })
           : role === "agent" ? agents.getSelfAgent(ctx).then((item) => ({ items: [item], next_cursor: null }))
             : agents.listAgents(ctx, { status: "all", limit: 100 }, "admin"),
         entries.listEntries(ctx, { view: "brief", archived: "no", order: "updated_desc", limit: 50 }, role),
+        getSiteTheme(ctx.env.DB),
       ]);
       const first = inbox.items[0];
       const snapshot: PanelSnapshot = {
@@ -143,7 +145,7 @@ export function createMcpServer(ctx: ServiceContext, scopes: readonly string[], 
           can_manage_entries: managers.includes(role) && scopeAllows(scopes, "hub:write"),
           can_manage_task_tags: managers.includes(role) && scopeAllows(scopes, "hub:write"),
           can_manage_sources: managers.includes(role) && scopeAllows(scopes, "hub:admin") },
-        app_origin: ctx.env.APP_ORIGIN, sources, entries: inbox,
+        app_origin: ctx.env.APP_ORIGIN, site_theme: settings.theme, sources, entries: inbox,
         entry: first ? await entries.getEntry(ctx, first.id) : null,
       };
       return { content: [{ type: "text", text: "Personal Hub 面板已打开。条目正文仅在用户选择附到聊天时传入对话。" }],

@@ -1,13 +1,16 @@
 import { createRoot } from "react-dom/client";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Archive, ArrowLeft, Check, CircleCheck, Copy, FilePlus, Mail, Paperclip, RefreshCw, Search, X } from "lucide-react";
 import type { EntryBriefDto, EntryFullDto, EntryVersionBriefDto, EntryVersionDto, Page, TaskDto, TaskTagDto } from "../shared/contracts";
 import { TaskTagBadges, TaskTagEditor, TaskTagManager, TaskTagPicker } from "../shared/TaskTagControls";
 import type { PanelSnapshot, PanelSource } from "../shared/panel";
+import { resolveSiteTheme, SITE_THEME_NAMES } from "../shared/site-theme";
 import { app, attachContext, call, clearContext, connect, extensions } from "./client";
-import "./style.css";
+import "../web/themes/shared/panel.css";
+import "../web/themes/current/panel.css";
+import "../web/themes/template/panel.css";
 
 type Nav = "inbox" | "sources" | "tasks" | "archive";
 type Selected = { source: string; entry: EntryVersionDto };
@@ -105,6 +108,8 @@ function TaskForm({ sources, entry, onSubmit, busy, tags }: { sources: PanelSour
 }
 
 function HubPanel({ initial }: { initial: PanelSnapshot }) {
+  const [siteTheme, setSiteTheme] = useState(() => resolveSiteTheme(initial.site_theme));
+  useLayoutEffect(() => { document.documentElement.dataset.siteTheme = siteTheme; }, [siteTheme]);
   const [nav, setNav] = useState<Nav>("inbox");
   const [sources, setSources] = useState(initial.sources);
   const [entries, setEntries] = useState(initial.entries);
@@ -289,6 +294,7 @@ function HubPanel({ initial }: { initial: PanelSnapshot }) {
       if (!fresh) throw new Error("未收到 Hub 数据。");
       setIdentity(fresh.identity);
       setSources(fresh.sources);
+      setSiteTheme(resolveSiteTheme(fresh.site_theme));
     }, "已刷新");
   }
 
@@ -342,7 +348,7 @@ function HubPanel({ initial }: { initial: PanelSnapshot }) {
     } catch (failure) { if (generation === tasksRequestVersion.current) setError(messageOf(failure)); } finally { if (generation === tasksRequestVersion.current) setLoading(false); }
   }
 
-  function sourceBoardOpen(source: PanelSource) { setSourceBoard(source.id); setSourceId(source.id); setVersion(null); setReading(false); }
+  function sourceBoardOpen(source: PanelSource) { setSourceBoard(source.id); setSourceId(source.id); setVersion(null); setReading(siteTheme === "template" && source.display_mode === "report"); }
   function row(record: EntryBriefDto) {
     return <div className={`entry-row ${activeId === record.id ? "selected" : ""}`} key={record.id}>
       <input type="checkbox" aria-label={`选择：${record.title}`} checked={selected.has(record.id)} disabled={busy} onChange={(event) => { void selectRecord(record, event.target.checked); }} />
@@ -424,7 +430,7 @@ function HubPanel({ initial }: { initial: PanelSnapshot }) {
           onSelect={(checked) => { void selectRecord(record, checked, record.version); }} onTask={identity.can_write ? (value) => { setTaskEntry(value); setModal("task"); } : undefined} />)}
         {!loading && entries.items.length === 0 ? <div className="empty-state">这个来源暂时没有记录。</div> : null}
         {entries.next_cursor ? <button className="button load-more" disabled={loading} onClick={() => { void moreEntries(); }}>加载更多记录</button> : null}
-      </section></main> : <main className={`workspace ${board ? "board-report" : ""}`} data-reading={String(reading || Boolean(board))}>
+      </section></main> : <main className={`workspace ${board ? "board-report" : ""}`} data-reading={String(reading || (siteTheme === "current" && Boolean(board)))}>
         <section className="list-pane" aria-label="条目列表">{listControls}<div className="entry-list" aria-busy={loading}>{entries.items.map(row)}
           {entries.next_cursor ? <button className="button load-more" disabled={loading} onClick={() => { void moreEntries(); }}>{loading ? "正在加载…" : "加载更多记录"}</button> : null}
           {!entries.items.length ? <div className="empty-state" role="status">{loading ? "正在读取记录…" : "没有符合条件的记录。"}</div> : null}
@@ -439,10 +445,11 @@ function HubPanel({ initial }: { initial: PanelSnapshot }) {
       remove={async (id) => { await call("delete_task_tag", { id }); setRevision((value) => value + 1); }} /></Dialog> : null}
     {modal === "tag-edit" && tagTask ? <Dialog title="编辑待办标签" close={() => setModal(null)}><TaskTagEditor key={tagTask.id} tags={taskTags} initial={tagTask.tags ?? []} save={async (task) => { await call("update_task", { id: tagTask.id, task }); setModal(null); setRevision((value) => value + 1); }} /></Dialog> : null}
     {modal === "context" ? <Dialog title="带入当前聊天" close={() => { setModal(null); }} actions={<><button className="button" disabled={busy} onClick={() => { void navigator.clipboard.writeText([...selected.values()].map(({ source, entry: item }) => `# ${item.title}\n来源：${source} · 版本 ${item.version}\n\n${item.content}`).join("\n\n---\n\n")).then(() => { setNotice("引用已复制"); }).catch(() => { setError("复制不可用，可以直接选取引用正文。"); }); }}><Copy />复制引用</button><button className="button primary" disabled={busy} onClick={() => { void attachSelected(); }}>附到聊天</button></>}>
-      <p>引用包含来源、完整正文和所选版本。附上后，你可以继续在 Codex 输入消息。</p>{[...selected.values()].map(({ source, entry: item }) => <article className="context-item" key={item.entry_id}><h3>{item.title}</h3><div className="row-meta">{source} · 版本 {item.version}</div><div className="context-content">{item.content}</div></article>)}
+      <p>引用包含来源、完整正文和所选版本。附上后，你可以继续在当前聊天输入消息。</p>{[...selected.values()].map(({ source, entry: item }) => <article className="context-item" key={item.entry_id}><h3>{item.title}</h3><div className="row-meta">{source} · 版本 {item.version}</div><div className="context-content">{item.content}</div></article>)}
     </Dialog> : modal === "task" ? <Dialog title="创建待办" close={() => { if (!busy) setModal(null); }} actions={<><button className="button" disabled={busy} onClick={() => { setModal(null); }}>取消</button><button className="button primary" form="task-form" type="submit" disabled={busy}>创建待办</button></>}>
       <TaskForm tags={taskTags} sources={sources.items} entry={taskEntry} busy={busy} onSubmit={(args) => { void mutate(async () => { await call("create_task", args); setModal(null); }, "待办已创建"); }} />
     </Dialog> : modal === "manage" ? <Dialog title="管理" close={() => { setModal(null); }}><div className="management-note">当前身份：{identity.role === "manager" ? "总管" : identity.role}。{identity.can_manage_sources ? "可以管理全部来源和展示方式。" : "当前连接未授权来源管理。"}</div>
+      <p>界面主题：{SITE_THEME_NAMES[siteTheme]}，跟随站点设置。更改后可点击面板上的“刷新”应用。</p>
       {sources.items.map((source) => <div className="management-row" key={source.id}><div className="source-copy"><strong>{source.name}</strong><p>{layouts[source.display_mode]} · {source.status === "active" ? "已启用" : "已停用"}</p></div>{identity.can_manage_sources && ["active", "disabled"].includes(source.status) ? <button className="button small" disabled={busy || source.id === identity.agent_id} onClick={() => { const action = source.status === "active" ? "disable" : "enable"; void mutate(async () => {
         await call("set_agent_status", { id: source.id, action }); setSources((previous) => ({ ...previous, items: previous.items.map((item) => item.id === source.id ? { ...item, status: action === "disable" ? "disabled" : "active" } : item) }));
       }, "来源状态已更新"); }}>{source.status === "active" ? "停用" : "启用"}</button> : null}</div>)}
@@ -459,7 +466,7 @@ function Startup() {
   const [snapshot, setSnapshot] = useState<PanelSnapshot | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
-    if (window.parent === window) { setError("请从 Codex 的 Personal Hub 插件打开这个面板。"); return; }
+    if (window.parent === window) { setError("请从 Personal Hub 插件打开这个面板。"); return; }
     void connect().then(setSnapshot).catch((failure: unknown) => { setError(messageOf(failure)); });
   }, []);
   if (snapshot) return <HubPanel initial={snapshot} />;
